@@ -259,7 +259,7 @@ with tab_config:
 
         st.info("Sign in with your Google account to get started.")
         st.markdown(
-            f'<a href="{auth_url}" target="_self">'
+            f'<a href="{auth_url}" target="_top">'
             '<button style="padding:0.75rem 2rem;font-size:1.1rem;cursor:pointer;">'
             "🔑 Sign in with Google</button></a>",
             unsafe_allow_html=True,
