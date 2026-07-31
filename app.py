@@ -45,8 +45,10 @@ def load_oauth_config():
 
 
 def get_redirect_uri():
-    host = os.environ.get("STREAMLIT_SERVER_ADDRESS", "localhost")
-    if "streamlit.app" in host:
+    if os.name != "nt":
+        return "https://speakertype-tagging.streamlit.app"
+    addr = os.environ.get("STREAMLIT_SERVER_ADDRESS", "")
+    if addr and addr != "localhost":
         return "https://speakertype-tagging.streamlit.app"
     return "http://localhost:8511"
 
@@ -276,6 +278,7 @@ with tab_config:
         )
 
         st.info("Sign in with your Google account to get started.")
+        st.caption(f"Redirect URI: {get_redirect_uri()}")
         st.markdown(
             f'<a href="{auth_url}" target="_self">'
             '<button style="padding:0.75rem 2rem;font-size:1.1rem;cursor:pointer;">'
