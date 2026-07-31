@@ -45,8 +45,8 @@ def load_oauth_config():
 
 
 def get_redirect_uri():
-    port = os.environ.get("STREAMLIT_SERVER_PORT", "")
-    if port == "8501":
+    host = os.environ.get("STREAMLIT_SERVER_ADDRESS", "localhost")
+    if "streamlit.app" in host:
         return "https://speakertype-tagging.streamlit.app"
     return "http://localhost:8511"
 
