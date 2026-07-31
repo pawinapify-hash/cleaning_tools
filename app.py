@@ -1,6 +1,7 @@
 import json
 import os
 import pickle
+import secrets
 from io import BytesIO
 
 import gspread
@@ -11,6 +12,9 @@ from google.oauth2.credentials import Credentials as OAuthCredentials
 from google_auth_oauthlib.flow import Flow
 
 from speaker_tagger import dict_df_to_dict, process_with_dict
+
+import hashlib
+import base64
 
 SPEAKER_TYPES = ["Brand Voice", "Consumer Voice", "Influencer & Page", "Publisher"]
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
@@ -75,7 +79,18 @@ def get_credentials():
                         scopes=SCOPES,
                         redirect_uri=get_redirect_uri(),
                     )
-                    flow.fetch_token(code=query_params["code"])
+                    verifier = None
+                    raw_state = query_params.get("state")
+                    if raw_state:
+                        try:
+                            verifier = base64.urlsafe_b64decode(
+                                raw_state.encode()
+                            ).decode()
+                        except Exception:
+                            pass
+                    flow.fetch_token(
+                        code=query_params["code"], code_verifier=verifier
+                    )
                     creds = flow.credentials
                     with open(TOKEN_FILE, "wb") as f:
                         pickle.dump(creds, f)
@@ -252,9 +267,17 @@ with tab_config:
             scopes=SCOPES,
             redirect_uri=get_redirect_uri(),
         )
+        code_verifier = secrets.token_urlsafe(64)
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).rstrip(b"=").decode()
+        state = base64.urlsafe_b64encode(code_verifier.encode()).decode()
         auth_url, _ = flow.authorization_url(
             prompt="consent",
             access_type="offline",
+            state=state,
+            code_challenge=code_challenge,
+            code_challenge_method="S256",
         )
 
         st.info("Sign in with your Google account to get started.")
