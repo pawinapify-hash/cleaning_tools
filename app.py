@@ -259,9 +259,11 @@ with tab_config:
 
         st.info("Sign in with your Google account to get started.")
         st.markdown(
-            f'<a href="{auth_url}" target="_top">'
-            '<button style="padding:0.75rem 2rem;font-size:1.1rem;cursor:pointer;">'
-            "🔑 Sign in with Google</button></a>",
+            f"""<a href="{auth_url}" target="_blank" 
+            style="display:inline-block;padding:0.75rem 2rem;font-size:1.1rem;
+            background:#f0f2f6;border:1px solid #d1d5db;border-radius:0.5rem;
+            text-decoration:none;color:#15426f;cursor:pointer;">
+            🔑 Sign in with Google</a>""",
             unsafe_allow_html=True,
         )
         st.caption("You only need to do this once.")
