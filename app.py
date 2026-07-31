@@ -93,11 +93,15 @@ def get_credentials():
                     creds = flow.credentials
                     with open(TOKEN_FILE, "wb") as f:
                         pickle.dump(creds, f)
-                    st.query_params.clear()
-                    st.rerun()
+                    st.markdown(
+                        '<meta http-equiv="refresh" content="0; url=/">',
+                        unsafe_allow_html=True,
+                    )
+                    st.success("Signed in. Redirecting...")
+                    st.stop()
                 except Exception as e:
-                    st.error(f"Authentication failed: {e}")
-                    st.query_params.clear()
+                    st.error(f"Auth failed: {type(e).__name__}: {e}")
+                    st.stop()
 
     return creds
 

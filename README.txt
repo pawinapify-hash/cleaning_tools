@@ -1,120 +1,103 @@
 ================================================================================
-  update_speakerdict_from_raw_data.ipynb
+  Speaker Tag Updater
 ================================================================================
 
-SUMMARY
--------
-This notebook processes a TalkWalker raw data export (Excel) and assigns a "Type of Speaker"
-tag to every row in the tags_customer column.
-
-It uses a speaker-type dictionary (username -> speaker type) as the primary source of truth,
-then applies two fallback rules to tag any remaining untagged rows.
-
-Rows that already contain a "Type of Speaker" tag (from TalkWalker or previous runs) are
-left untouched — they are never overwritten or duplicated.
+A Streamlit web app that tags TalkWalker export data with speaker types
+(Brand Voice, Consumer Voice, Influencer & Page, Publisher) using a
+dictionary stored in Google Sheets.
 
 
-FOLDER STRUCTURE
-----------------
-Run the notebook from this directory:
-
-  update_speakertype/
-  |-- update_speakerdict_from_raw_data.ipynb   <-- this file
-  |
-  |-- SpeakerTypeDict/                         <-- speaker dictionary Excel file(s)
-  |     |-- SpeakerTypeDict_YYYYMMDD.xlsx
-  |
-  |-- Input/                                   <-- TalkWalker raw data Excel file(s)
-  |     |-- SCG_TalkWalkerRaw_X-Y.xlsx
-  |
-  |-- Output/                                  <-- processed output (auto-created)
-        |-- SCG_TalkWalkerRaw_X-Y.xlsx
+HOW IT WORKS
+------------
+1. User signs in with their Google account (one time).
+2. App reads the speaker dictionary from a Google Sheet.
+3. User drops a TalkWalker raw data Excel file.
+4. App tags every row using a 3-step fallback strategy:
+   a) Match author name against the dictionary (exact, case-insensitive).
+   b) Tag "isComment" rows as Consumer Voice.
+   c) Fallback: tag remaining rows as Influencer & Page.
+5. User downloads the tagged Excel file.
 
 
-HOW TO RUN
-----------
-1. Place the speaker dictionary Excel in  SpeakerTypeDict/
-2. Place the TalkWalker raw export Excel in  Input/
-3. Open the notebook and run all cells (Run > Run All)
-4. The output file appears in  Output/  (same filename as input)
+PROJECT FILES
+-------------
+app.py                  Streamlit web app (UI + Google OAuth)
+speaker_tagger.py       Core tagging logic (process(), update_speaker_tags())
+requirements.txt        Python dependencies
+README.txt              This file
+
+.gitignore              Excludes secrets, tokens, and temp files
+
+update_speakerdict_from_raw_data.ipynb   Original notebook (legacy)
+SpeakerTypeDict/        Local dictionary folder (legacy, not used by app)
+Input/                  Local input folder (legacy, not used by app)
+Output/                 Local output folder (legacy, not used by app)
 
 
-STEP-BY-STEP EXPLANATION
-------------------------
+LOCAL SETUP
+-----------
+1. Install dependencies:
+      pip install -r requirements.txt
 
-[Cell 1] Imports
-    pandas, os, numpy
+2. Create a Google Cloud OAuth 2.0 client:
+   - Go to https://console.cloud.google.com/apis/credentials
+   - Create OAuth 2.0 Client ID > Web application
+   - Add authorized redirect URIs:
+        http://localhost:8511
+        https://speakertype-tagging.streamlit.app
+   - Add authorized JavaScript origins:
+        http://localhost:8511
+        https://speakertype-tagging.streamlit.app
+   - Download the JSON > rename to oauth_client.json > place in this folder
 
-[Cell 2] Directory setup
-    BASE_DIR = current working directory (the folder containing this notebook)
-    speaker_dict_dir  = BASE_DIR / SpeakerTypeDict
-    rawdata_dir       = BASE_DIR / Input
-    output_dir        = BASE_DIR / Output
+3. Enable the Google Sheets API:
+   - https://console.cloud.google.com/apis/library/sheets.googleapis.com
 
-[Cell 3] Load speaker type dictionary
-    - Reads the first .xlsx/.xls file in SpeakerTypeDict/
-    - Normalizes the "Username" column: strip whitespace, lowercase
-    - Builds a lookup dict:  cleaned_username -> "Type of Speaker/<Speaker Type>"
-      Example:  "scg news" -> "Type of Speaker/Brand voice"
+4. Create .streamlit/secrets.toml from oauth_client.json:
+      [oauth]
+      client_id = "..."
+      client_secret = "..."
 
-[Cell 4] Load raw data
-    - Reads the first .xlsx/.xls file in Input/
-    - If no file is found, creates an empty DataFrame (no processing)
+5. Run the app:
+      streamlit run app.py --server.port 8511
 
-[Cell 5] URL-to-author-name replacement
-    - For certain source types (blogs, online news, message boards, newsletters, etc.)
-      that often have unreliable author names, this step replaces the
-      extra_author_attributes.name field with the domain name extracted from the
-      article URL.
-    - Example:  www.prachachart.com  ->  prachachart
-    - Affected source_types:
-        BLOG,BLOG_OTHER
-        ONLINENEWS,ONLINENEWS_OTHER / _NEWSPAPER / _PRESSRELEASES /
-          _MAGAZINE / _TVRADIO / _AGENCY
-        MESSAGEBOARD,MESSAGEBOARD_OTHER
-        NEWSLETTER,NEWSLETTER_SUBSTACK
-        OTHER
-    - Adds a boolean column "is_url_replaced" to track which rows were modified.
-
-[Cell 6] update_speaker_tags() function definition
-    This is the core logic. It tags every row with a speaker type using a
-    3-step fallback strategy. Rows that already have a speaker type are skipped.
-
-    Step 1 — Dictionary match
-      Match the cleaned author name (extra_author_attributes.name) against the
-      speaker type dictionary from Cell 3. Exact match only (case-insensitive).
-      If the row has no speaker type tag yet:
-        - append the mapped speaker type to tags_customer
-
-    Step 2 — Comment detection
-      Rows still missing a speaker type are checked for "isComment" in the
-      tags_internal column. If found:
-        - tag as "Type of Speaker/Consumer Voice"
-
-    Step 3 — Fallback
-      All remaining rows that still have no speaker type:
-        - tag as "Type of Speaker/Influencer & Page"
-
-    Notes:
-      - NaN tags_customer values are treated as empty strings.
-      - The "Type of Speaker" check is re-evaluated after each step so that
-        rows tagged in an earlier step are not re-tagged in a later step.
-      - If tags_customer already has other (non-speaker) tags, the new speaker
-        tag is appended with a comma separator.
-
-[Cell 7] Execute tagging
-    Calls update_speaker_tags() on the loaded raw data with the loaded dictionary.
-
-[Cell 8] Save output
-    Writes the updated DataFrame to Output/ with the same filename as the input.
-    The strings_to_urls=False option suppresses xlsxwriter warnings about Excel's
-    65,530 URL-per-worksheet limit (URLs are still written as plain text).
+6. Open http://localhost:8511 in your browser.
 
 
-NOTES
------
-- This notebook was originally designed for Google Colab. It has been modified to
-  run locally using the folder structure described above.
-- The output is always a single Excel file matching the input filename.
-- If a row already has 2 speaker types from the source data (e.g. Brand voice,Publisher),
-  they are preserved as-is. The script only tags rows that have zero speaker types.
+STREAMLIT CLOUD DEPLOYMENT
+--------------------------
+1. Deploy this repo to Streamlit Cloud.
+
+2. Go to your app's Settings > Secrets and paste:
+      [oauth]
+      client_id = "..."
+      client_secret = "..."
+
+3. The app auto-detects the environment and uses the correct
+   redirect URI:
+      Local:       http://localhost:8511
+      Deployed:    https://speakertype-tagging.streamlit.app
+
+4. Make sure both URIs are in the OAuth client authorized redirect
+   URIs in Google Cloud Console.
+
+
+GOOGLE SHEET
+------------
+The app reads from a fixed Google Sheet URL (FIXED_SHEET_URL in app.py).
+The sheet must have these columns in the first worksheet:
+
+    Username      Speaker Type
+    ----------    ----------------
+    SCG News      Brand Voice
+    prachachart   Publisher
+    ...
+
+The user's Google account must have Viewer access to the sheet.
+
+
+NOTE
+----
+Rows that already contain a "Type of Speaker" tag in tags_customer
+(from TalkWalker) are left untouched. The "Newly Tagged" metric counts
+only rows tagged during the current run, excluding pre-existing tags.
