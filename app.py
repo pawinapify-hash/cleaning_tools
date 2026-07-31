@@ -1,42 +1,106 @@
+import json
 import os
+import pickle
 from datetime import datetime
 from io import BytesIO
 
+import gspread
 import pandas as pd
 import streamlit as st
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials as OAuthCredentials
+from google_auth_oauthlib.flow import Flow
 
 from speaker_tagger import dict_df_to_dict, process_with_dict
 
-DICT_DIR = "SpeakerTypeDict"
-DICT_FILE = None
 SPEAKER_TYPES = ["Brand Voice", "Consumer Voice", "Influencer & Page", "Publisher"]
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+OAUTH_CLIENT_FILE = "oauth_client.json"
+TOKEN_FILE = "token.pickle"
 
 
-def find_dict_file():
-    if not os.path.isdir(DICT_DIR):
-        return None
-    for f in sorted(os.listdir(DICT_DIR)):
-        if f.endswith((".xlsx", ".xls")) and not f.startswith("~"):
-            return os.path.join(DICT_DIR, f)
+def load_oauth_config():
+    """Load OAuth client config from Streamlit secrets first, then local file."""
+    try:
+        if "oauth" in st.secrets:
+            client_id = st.secrets["oauth"]["client_id"]
+            client_secret = st.secrets["oauth"]["client_secret"]
+            return {
+                "web": {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                }
+            }
+    except Exception:
+        pass
+
+    if os.path.exists(OAUTH_CLIENT_FILE):
+        with open(OAUTH_CLIENT_FILE) as f:
+            return json.load(f)
+
     return None
 
 
-def load_dict_df(filepath):
-    df = pd.read_excel(filepath)
+def get_redirect_uri():
+    """Return the correct redirect URI for local or Streamlit Cloud."""
+    port = os.environ.get("STREAMLIT_SERVER_PORT", "")
+    if port == "8501":
+        return "https://speakertype-tagging.streamlit.app"
+    return "http://localhost:8511"
+
+
+def get_credentials():
+    """Get valid Google OAuth credentials, reusing token or starting auth flow."""
+    creds = None
+
+    if os.path.exists(TOKEN_FILE):
+        with open(TOKEN_FILE, "rb") as f:
+            creds = pickle.load(f)
+
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            with open(TOKEN_FILE, "wb") as f:
+                pickle.dump(creds, f)
+        except Exception:
+            creds = None
+
+    if not creds or not creds.valid:
+        query_params = st.query_params
+        if "code" in query_params:
+            oauth_config = load_oauth_config()
+            if oauth_config:
+                try:
+                    flow = Flow.from_client_config(
+                        oauth_config,
+                        scopes=SCOPES,
+                        redirect_uri=get_redirect_uri(),
+                    )
+                    flow.fetch_token(code=query_params["code"])
+                    creds = flow.credentials
+                    with open(TOKEN_FILE, "wb") as f:
+                        pickle.dump(creds, f)
+                    st.query_params.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Authentication failed: {e}")
+                    st.query_params.clear()
+
+    return creds
+
+
+def read_dict_from_gsheet(spreadsheet_url, creds):
+    """Read Username / Speaker Type from the first worksheet of a Google Sheet."""
+    client = gspread.authorize(creds)
+    sheet = client.open_by_url(spreadsheet_url).sheet1
+    records = sheet.get_all_records()
+    if not records:
+        return pd.DataFrame(columns=["Username", "Speaker Type"])
+    df = pd.DataFrame(records)
     df = df[["Username", "Speaker Type"]].dropna(subset=["Username"])
     return df
-
-
-def save_dict_df(df, filepath):
-    df.to_excel(filepath, index=False)
-
-
-def find_duplicates(df):
-    stripped = df["Username"].astype(str).str.strip().str.lower()
-    dup_mask = stripped.duplicated(keep=False)
-    dup_values = stripped[dup_mask].unique()
-    dup_rows = df[dup_mask]
-    return dup_values, dup_rows
 
 
 # ---------------------------------------------------------------------------
@@ -55,232 +119,126 @@ st.markdown(
     html, body, [class*="css"] {
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 0;
-    }
-    .stTabs [data-baseweb="tab"] {
-        flex: 1 1 0;
-        justify-content: center;
-        font-size: 1.1rem;
-        font-weight: 600;
-        padding: 0.75rem 0;
-    }
-    .stFileUploader section {
-        width: 100%;
-    }
-    .stFileUploader [data-testid="stFileUploadDropzone"] {
-        width: 100%;
-    }
+    .stFileUploader section { width: 100%; }
+    .stFileUploader [data-testid="stFileUploadDropzone"] { width: 100%; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 # ---------------------------------------------------------------------------
-# Session state init
+# Sidebar — Google Sheets config
 # ---------------------------------------------------------------------------
-if "dict_df" not in st.session_state:
-    DICT_FILE = find_dict_file()
-    if DICT_FILE:
-        st.session_state.dict_df = load_dict_df(DICT_FILE)
-        st.session_state.dict_file = DICT_FILE
+with st.sidebar:
+    st.header("⚙️ Google Sheets Config")
+
+    oauth_config = load_oauth_config()
+    if oauth_config is None:
+        st.warning(f"Place `{OAUTH_CLIENT_FILE}` in the project folder to enable Sign-in.")
     else:
-        st.session_state.dict_df = pd.DataFrame(columns=["Username", "Speaker Type"])
-        st.session_state.dict_file = os.path.join(DICT_DIR, "SpeakerTypeDict.xlsx")
+        creds = get_credentials()
+        if creds and creds.valid:
+            st.session_state.creds = creds
+            st.success("✅ Signed in with Google")
 
-st.session_state.speakertype_dict = dict_df_to_dict(st.session_state.dict_df)
+            st.session_state.sheet_url = st.text_input(
+                "Spreadsheet URL",
+                value=st.session_state.get("sheet_url", ""),
+                placeholder="https://docs.google.com/spreadsheets/d/...",
+                help="Sheet must have Username and Speaker Type columns",
+            )
+        else:
+            if "creds" not in st.session_state:
+                flow = Flow.from_client_config(
+                    oauth_config,
+                    scopes=SCOPES,
+                    redirect_uri=get_redirect_uri(),
+                )
+                auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
+                st.markdown(
+                    f'<a href="{auth_url}" target="_self">'
+                    '<button style="width:100%;padding:0.5rem;font-size:1rem;cursor:pointer;">'
+                    "🔑 Sign in with Google</button></a>",
+                    unsafe_allow_html=True,
+                )
+            st.info("Click the button above to sign in with your Google account.")
+
+    ready = bool(
+        st.session_state.get("creds")
+        and st.session_state.get("sheet_url")
+    )
 
 # ---------------------------------------------------------------------------
-# Tabs
+# Main
 # ---------------------------------------------------------------------------
 st.title("🏷️ Speaker Tag Updater")
-st.caption("Tag TalkWalker export data with speaker types")
+st.caption("Tag TalkWalker export data with speaker types from Google Sheets")
 
-tab_process, tab_dict = st.tabs(["📤 Process", "📖 Speaker Dictionary"])
+raw_file = st.file_uploader(
+    "Drag and drop your TalkWalker raw data Excel here",
+    type=["xlsx", "xls"],
+)
 
-# ===========================================================================
-# Tab 1: Process
-# ===========================================================================
-with tab_process:
-    raw_file = st.file_uploader(
-        "Drag and drop your TalkWalker raw data Excel here",
-        type=["xlsx", "xls"],
+if st.button(
+    "⚡ Process",
+    type="primary",
+    disabled=(raw_file is None or not ready),
+):
+    with st.spinner("Reading dictionary from Google Sheets..."):
+        dict_df = read_dict_from_gsheet(
+            st.session_state.sheet_url, st.session_state.creds
+        )
+        speakertype_dict = dict_df_to_dict(dict_df)
+
+    with st.spinner("Processing..."):
+        df, stats = process_with_dict(raw_file.read(), speakertype_dict)
+
+    st.success(
+        f"Done. {stats['total_rows']:,} rows processed. "
+        f"Dictionary: {len(speakertype_dict)} entries from Google Sheets."
     )
 
-    if st.button(
-        "⚡ Process",
-        type="primary",
-        disabled=(raw_file is None or len(st.session_state.speakertype_dict) == 0),
-    ):
-        with st.spinner("Processing..."):
-            df, stats = process_with_dict(
-                raw_file.read(), st.session_state.speakertype_dict
-            )
+    tags_col = df["tags_customer"].astype(str)
+    tagged_mask = tags_col.str.contains("Type of Speaker", na=False)
+    total_tagged = tagged_mask.sum()
 
-        st.success(f"Done. {stats['total_rows']:,} rows processed.")
+    type_counts = {}
+    for speaker_type in SPEAKER_TYPES:
+        type_counts[speaker_type] = tags_col.str.contains(
+            f"Type of Speaker/{speaker_type}", na=False
+        ).sum()
 
-        col_a, col_b, col_c = st.columns(3)
-        with col_a:
-            with st.container(border=True):
-                st.metric("Total Rows", f"{stats['total_rows']:,}")
-        with col_b:
-            with st.container(border=True):
-                st.metric("Dict Entries", stats["dict_loaded"])
-        with col_c:
-            with st.container(border=True):
-                st.metric("Columns", len(df.columns))
-
-        st.subheader("Data Preview")
-        st.dataframe(df.head(100), use_container_width=True)
-
-        output = BytesIO()
-        with pd.ExcelWriter(
-            output,
-            engine="xlsxwriter",
-            engine_kwargs={"options": {"strings_to_urls": False}},
-        ) as writer:
-            df.to_excel(writer, index=False)
-        output.seek(0)
-
-        st.download_button(
-            label="⬇️ Download Tagged Excel",
-            data=output,
-            file_name=raw_file.name.replace(".", "_tagged."),
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary",
-        )
-
-# ===========================================================================
-# Tab 2: Speaker Dictionary
-# ===========================================================================
-with tab_dict:
-    dict_path = st.session_state.dict_file
-    if os.path.exists(dict_path):
-        st.caption(f"Dictionary file: {dict_path}")
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
+    col_a, col_b = st.columns(2)
+    with col_a:
         with st.container(border=True):
-            st.metric("Total Entries", len(st.session_state.dict_df))
-    full_df = st.session_state.dict_df.copy()
-
-    dup_values, _ = find_duplicates(full_df)
-    with col2:
+            st.metric("Total Rows", f"{stats['total_rows']:,}")
+    with col_b:
         with st.container(border=True):
-            st.metric("Duplicate Usernames", len(dup_values))
+            st.metric("Total Tagged", f"{total_tagged:,}")
 
-    mtime = os.path.getmtime(dict_path) if dict_path and os.path.exists(dict_path) else None
-    with col3:
-        with st.container(border=True):
-            st.metric("Last Saved", datetime.fromtimestamp(mtime).strftime("%d/%m/%Y %H:%M") if mtime else "-")
-
-    if len(dup_values) > 0:
-        dup_usernames = ", ".join(sorted(dup_values)[:10])
-        suffix = "..." if len(dup_values) > 10 else ""
-        st.warning(
-            f"**{len(dup_values)} duplicate usernames found.** "
-            f"Only the first match is used during processing. "
-            f"Duplicates: {dup_usernames}{suffix}"
-        )
-
-    st.divider()
-
-    # Search
-    search = st.text_input(
-        "🔍 Search",
-        value="",
-        placeholder="Filter by username or speaker type...",
-        key="dict_search",
-    )
-
-    if search:
-        mask = (
-            full_df["Username"]
-            .astype(str)
-            .str.contains(search, case=False, na=False)
-            | full_df["Speaker Type"]
-            .astype(str)
-            .str.contains(search, case=False, na=False)
-        )
-        results = full_df[mask]
-        st.caption(f"{len(results)} match(es)")
-        st.dataframe(
-            results,
-            use_container_width=True,
-            hide_index=True,
-            height=min(35 * len(results) + 38, 300),
-        )
-        st.divider()
-
-    # Editor
-    st.subheader(f"📝 Edit Dictionary ({len(full_df)} entries)")
-
-    editor_df = full_df.reset_index(drop=True)
-    editor_df["Username"] = editor_df["Username"].astype(str)
-    editor_df["Speaker Type"] = editor_df["Speaker Type"].fillna("").astype(str)
-
-    editor_key = f"dict_editor_{len(full_df)}_{hash(tuple(editor_df['Username']))}"
-    edited_df = st.data_editor(
-        editor_df,
-        num_rows="dynamic",
-        use_container_width=True,
-        column_config={
-            "Username": st.column_config.TextColumn(),
-            "Speaker Type": st.column_config.SelectboxColumn(
-                options=SPEAKER_TYPES
-            ),
-        },
-        key=editor_key,
-    )
-
+    st.caption("Tags by speaker type")
     c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        if st.button("💾 Save", use_container_width=True, type="primary"):
-            os.makedirs(DICT_DIR, exist_ok=True)
-            save_dict_df(edited_df, st.session_state.dict_file)
-            st.session_state.dict_df = edited_df
-            st.session_state.speakertype_dict = dict_df_to_dict(edited_df)
-            st.success("Saved")
-            st.rerun()
+    for col, (stype, count) in zip([c1, c2, c3, c4], type_counts.items()):
+        with col:
+            with st.container(border=True):
+                st.metric(stype, f"{count:,}")
 
-    with c2:
-        if st.button("↩️ Reset", use_container_width=True):
-            DICT_FILE = find_dict_file()
-            if DICT_FILE:
-                st.session_state.dict_df = load_dict_df(DICT_FILE)
-                st.session_state.dict_file = DICT_FILE
-                st.session_state.speakertype_dict = dict_df_to_dict(
-                    st.session_state.dict_df
-                )
-                st.rerun()
+    st.subheader("Data Preview")
+    st.dataframe(df.head(100), use_container_width=True)
 
-    with c3:
-        with st.popover("📥 Import", use_container_width=True):
-            uploaded_dict = st.file_uploader(
-                "Upload dictionary Excel",
-                type=["xlsx", "xls"],
-                key="dict_upload",
-                label_visibility="collapsed",
-            )
-            if uploaded_dict:
-                new_df = pd.read_excel(uploaded_dict)
-                new_df = new_df[["Username", "Speaker Type"]].dropna(
-                    subset=["Username"]
-                )
-                os.makedirs(DICT_DIR, exist_ok=True)
-                save_dict_df(new_df, st.session_state.dict_file)
-                st.session_state.dict_df = new_df
-                st.session_state.speakertype_dict = dict_df_to_dict(new_df)
-                st.success(f"Imported and saved {len(new_df)} entries")
-                st.rerun()
+    output = BytesIO()
+    with pd.ExcelWriter(
+        output,
+        engine="xlsxwriter",
+        engine_kwargs={"options": {"strings_to_urls": False}},
+    ) as writer:
+        df.to_excel(writer, index=False)
+    output.seek(0)
 
-    with c4:
-        buf = BytesIO()
-        edited_df.to_excel(buf, index=False)
-        st.download_button(
-            label="📤 Export",
-            data=buf.getvalue(),
-            file_name="SpeakerTypeDict.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+    st.download_button(
+        label="⬇️ Download Tagged Excel",
+        data=output,
+        file_name=raw_file.name.replace(".", "_tagged."),
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary",
+    )

@@ -3,3 +3,6 @@ numpy>=2.4
 openpyxl>=3.1
 xlsxwriter>=3.2
 streamlit>=1.40
+gspread>=6.2
+google-auth>=2.56
+google-auth-oauthlib>=1.4
