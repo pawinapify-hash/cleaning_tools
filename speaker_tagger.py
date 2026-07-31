@@ -185,11 +185,29 @@ def _process_raw(raw_data_bytes, speakertype_dict):
         df.rename(columns={"Content": "Sample Content"}, inplace=True)
 
     df = apply_source_type_url_replacement(df)
+
+    tagged_before = (
+        df["tags_customer"]
+        .fillna("")
+        .astype(str)
+        .str.contains("Type of Speaker", na=False)
+        .sum()
+    )
+
     df = update_speaker_tags(df, speakertype_dict)
+
+    tagged_after = (
+        df["tags_customer"]
+        .fillna("")
+        .astype(str)
+        .str.contains("Type of Speaker", na=False)
+        .sum()
+    )
 
     stats = {
         "total_rows": len(df),
         "dict_loaded": len(speakertype_dict),
+        "newly_tagged": tagged_after - tagged_before,
     }
 
     return df, stats

@@ -1,7 +1,7 @@
 import json
 import os
 import pickle
-from datetime import datetime
+import secrets
 from io import BytesIO
 
 import gspread
@@ -13,22 +13,24 @@ from google_auth_oauthlib.flow import Flow
 
 from speaker_tagger import dict_df_to_dict, process_with_dict
 
+import hashlib
+import base64
+
 SPEAKER_TYPES = ["Brand Voice", "Consumer Voice", "Influencer & Page", "Publisher"]
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 OAUTH_CLIENT_FILE = "oauth_client.json"
 TOKEN_FILE = "token.pickle"
+CODE_VERIFIER_FILE = ".code_verifier"
+FIXED_SHEET_URL = "https://docs.google.com/spreadsheets/d/1Hoy7EfkckFdCAWW8ELa3qc41iHpOeJPeOQqjIcfQWRc/edit?gid=1690969829#gid=1690969829"
 
 
 def load_oauth_config():
-    """Load OAuth client config from Streamlit secrets first, then local file."""
     try:
         if "oauth" in st.secrets:
-            client_id = st.secrets["oauth"]["client_id"]
-            client_secret = st.secrets["oauth"]["client_secret"]
             return {
                 "web": {
-                    "client_id": client_id,
-                    "client_secret": client_secret,
+                    "client_id": st.secrets["oauth"]["client_id"],
+                    "client_secret": st.secrets["oauth"]["client_secret"],
                     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                     "token_uri": "https://oauth2.googleapis.com/token",
                 }
@@ -44,7 +46,6 @@ def load_oauth_config():
 
 
 def get_redirect_uri():
-    """Return the correct redirect URI for local or Streamlit Cloud."""
     port = os.environ.get("STREAMLIT_SERVER_PORT", "")
     if port == "8501":
         return "https://speakertype-tagging.streamlit.app"
@@ -52,7 +53,6 @@ def get_redirect_uri():
 
 
 def get_credentials():
-    """Get valid Google OAuth credentials, reusing token or starting auth flow."""
     creds = None
 
     if os.path.exists(TOKEN_FILE):
@@ -78,7 +78,12 @@ def get_credentials():
                         scopes=SCOPES,
                         redirect_uri=get_redirect_uri(),
                     )
-                    flow.fetch_token(code=query_params["code"])
+                    verifier = None
+                    if os.path.exists(CODE_VERIFIER_FILE):
+                        with open(CODE_VERIFIER_FILE) as f:
+                            verifier = f.read().strip()
+                        os.remove(CODE_VERIFIER_FILE)
+                    flow.fetch_token(code=query_params["code"], code_verifier=verifier)
                     creds = flow.credentials
                     with open(TOKEN_FILE, "wb") as f:
                         pickle.dump(creds, f)
@@ -86,13 +91,14 @@ def get_credentials():
                     st.rerun()
                 except Exception as e:
                     st.error(f"Authentication failed: {e}")
+                    if os.path.exists(CODE_VERIFIER_FILE):
+                        os.remove(CODE_VERIFIER_FILE)
                     st.query_params.clear()
 
     return creds
 
 
 def read_dict_from_gsheet(spreadsheet_url, creds):
-    """Read Username / Speaker Type from the first worksheet of a Google Sheet."""
     client = gspread.authorize(creds)
     sheet = client.open_by_url(spreadsheet_url).sheet1
     records = sheet.get_all_records()
@@ -116,129 +122,161 @@ st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    html, body, [class*="css"] {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    }
+    html, body, [class*="css"] { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
     .stFileUploader section { width: 100%; }
     .stFileUploader [data-testid="stFileUploadDropzone"] { width: 100%; }
+    .stTabs [data-baseweb="tab-list"] { gap: 0; }
+    .stTabs [data-baseweb="tab"] {
+        flex: 1 1 0; justify-content: center; font-size: 1.1rem; font-weight: 600; padding: 0.75rem 0;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 # ---------------------------------------------------------------------------
-# Sidebar — Google Sheets config
+# Auth & sheet setup (shared)
 # ---------------------------------------------------------------------------
-with st.sidebar:
-    st.header("⚙️ Google Sheets Config")
-
-    oauth_config = load_oauth_config()
-    if oauth_config is None:
-        st.warning(f"Place `{OAUTH_CLIENT_FILE}` in the project folder to enable Sign-in.")
-    else:
-        creds = get_credentials()
-        if creds and creds.valid:
-            st.session_state.creds = creds
-            st.success("✅ Signed in with Google")
-
-            st.session_state.sheet_url = st.text_input(
-                "Spreadsheet URL",
-                value=st.session_state.get("sheet_url", ""),
-                placeholder="https://docs.google.com/spreadsheets/d/...",
-                help="Sheet must have Username and Speaker Type columns",
-            )
-        else:
-            if "creds" not in st.session_state:
-                flow = Flow.from_client_config(
-                    oauth_config,
-                    scopes=SCOPES,
-                    redirect_uri=get_redirect_uri(),
-                )
-                auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
-                st.markdown(
-                    f'<a href="{auth_url}" target="_self">'
-                    '<button style="width:100%;padding:0.5rem;font-size:1rem;cursor:pointer;">'
-                    "🔑 Sign in with Google</button></a>",
-                    unsafe_allow_html=True,
-                )
-            st.info("Click the button above to sign in with your Google account.")
-
-    ready = bool(
-        st.session_state.get("creds")
-        and st.session_state.get("sheet_url")
-    )
+st.session_state.sheet_url = FIXED_SHEET_URL
+oauth_config = load_oauth_config()
+creds = get_credentials()
+if creds and creds.valid:
+    st.session_state.creds = creds
+ready = bool(st.session_state.get("creds"))
 
 # ---------------------------------------------------------------------------
-# Main
+# Tabs
 # ---------------------------------------------------------------------------
 st.title("🏷️ Speaker Tag Updater")
-st.caption("Tag TalkWalker export data with speaker types from Google Sheets")
 
-raw_file = st.file_uploader(
-    "Drag and drop your TalkWalker raw data Excel here",
-    type=["xlsx", "xls"],
-)
+tab_process, tab_config = st.tabs(["📤 Process", "⚙️ Configuration"])
 
-if st.button(
-    "⚡ Process",
-    type="primary",
-    disabled=(raw_file is None or not ready),
-):
-    with st.spinner("Reading dictionary from Google Sheets..."):
-        dict_df = read_dict_from_gsheet(
-            st.session_state.sheet_url, st.session_state.creds
-        )
-        speakertype_dict = dict_df_to_dict(dict_df)
-
-    with st.spinner("Processing..."):
-        df, stats = process_with_dict(raw_file.read(), speakertype_dict)
-
-    st.success(
-        f"Done. {stats['total_rows']:,} rows processed. "
-        f"Dictionary: {len(speakertype_dict)} entries from Google Sheets."
+# ===========================================================================
+# Tab 1: Process
+# ===========================================================================
+with tab_process:
+    raw_file = st.file_uploader(
+        "Drag and drop your TalkWalker raw data Excel here",
+        type=["xlsx", "xls"],
     )
 
-    tags_col = df["tags_customer"].astype(str)
-    tagged_mask = tags_col.str.contains("Type of Speaker", na=False)
-    total_tagged = tagged_mask.sum()
-
-    type_counts = {}
-    for speaker_type in SPEAKER_TYPES:
-        type_counts[speaker_type] = tags_col.str.contains(
-            f"Type of Speaker/{speaker_type}", na=False
-        ).sum()
-
-    col_a, col_b = st.columns(2)
-    with col_a:
-        with st.container(border=True):
-            st.metric("Total Rows", f"{stats['total_rows']:,}")
-    with col_b:
-        with st.container(border=True):
-            st.metric("Total Tagged", f"{total_tagged:,}")
-
-    st.caption("Tags by speaker type")
-    c1, c2, c3, c4 = st.columns(4)
-    for col, (stype, count) in zip([c1, c2, c3, c4], type_counts.items()):
-        with col:
-            with st.container(border=True):
-                st.metric(stype, f"{count:,}")
-
-    st.subheader("Data Preview")
-    st.dataframe(df.head(100), use_container_width=True)
-
-    output = BytesIO()
-    with pd.ExcelWriter(
-        output,
-        engine="xlsxwriter",
-        engine_kwargs={"options": {"strings_to_urls": False}},
-    ) as writer:
-        df.to_excel(writer, index=False)
-    output.seek(0)
-
-    st.download_button(
-        label="⬇️ Download Tagged Excel",
-        data=output,
-        file_name=raw_file.name.replace(".", "_tagged."),
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    if st.button(
+        "⚡ Process",
         type="primary",
-    )
+        disabled=(raw_file is None or not ready),
+    ):
+        with st.spinner("Reading dictionary from Google Sheets..."):
+            try:
+                dict_df = read_dict_from_gsheet(
+                    st.session_state.sheet_url, st.session_state.creds
+                )
+                speakertype_dict = dict_df_to_dict(dict_df)
+            except Exception as e:
+                st.error(
+                    f"Failed to read Google Sheet. "
+                    f"Make sure your account has access.\n\nError: {e}"
+                )
+                st.stop()
+
+        with st.spinner("Processing..."):
+            df, stats = process_with_dict(raw_file.read(), speakertype_dict)
+
+        st.success(
+            f"Done. {stats['total_rows']:,} rows processed. "
+            f"Dictionary: {len(speakertype_dict)} entries."
+        )
+
+        tags_col = df["tags_customer"].astype(str)
+
+        type_counts = {}
+        for speaker_type in SPEAKER_TYPES:
+            type_counts[speaker_type] = tags_col.str.contains(
+                f"Type of Speaker/{speaker_type}", na=False
+            ).sum()
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            with st.container(border=True):
+                st.metric("Total Rows", f"{stats['total_rows']:,}")
+        with col_b:
+            with st.container(border=True):
+                st.metric("Newly Tagged", f"{stats['newly_tagged']:,}")
+
+        st.caption("Tags by speaker type")
+        c1, c2, c3, c4 = st.columns(4)
+        for col, (stype, count) in zip([c1, c2, c3, c4], type_counts.items()):
+            with col:
+                with st.container(border=True):
+                    st.metric(stype, f"{count:,}")
+
+        st.subheader("Data Preview")
+        st.dataframe(df.head(100), use_container_width=True)
+
+        output = BytesIO()
+        with pd.ExcelWriter(
+            output,
+            engine="xlsxwriter",
+            engine_kwargs={"options": {"strings_to_urls": False}},
+        ) as writer:
+            df.to_excel(writer, index=False)
+        output.seek(0)
+
+        st.download_button(
+            label="⬇️ Download Tagged Excel",
+            data=output,
+            file_name=raw_file.name.replace(".", "_tagged."),
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+        )
+
+# ===========================================================================
+# Tab 2: Configuration
+# ===========================================================================
+with tab_config:
+    if oauth_config is None:
+        st.warning(
+            f"No OAuth config found. Add `{OAUTH_CLIENT_FILE}` "
+            "to the project folder, or set `[oauth]` in Streamlit secrets."
+        )
+    elif creds and creds.valid:
+        st.success("✅ Signed in with Google")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Status", "Connected")
+        with col2:
+            st.markdown(
+                f'<a href="{FIXED_SHEET_URL}" target="_blank">'
+                '<button style="width:100%;padding:0.5rem;font-size:1rem;cursor:pointer;">'
+                "📝 Edit Source</button></a>",
+                unsafe_allow_html=True,
+            )
+            st.caption("Opens the dictionary Google Sheet in a new tab")
+    else:
+        flow = Flow.from_client_config(
+            oauth_config,
+            scopes=SCOPES,
+            redirect_uri=get_redirect_uri(),
+        )
+        code_verifier = secrets.token_urlsafe(64)
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).rstrip(b"=").decode()
+        auth_url, _ = flow.authorization_url(
+            prompt="consent",
+            access_type="offline",
+            state=secrets.token_urlsafe(16),
+            code_challenge=code_challenge,
+            code_challenge_method="S256",
+        )
+        with open(CODE_VERIFIER_FILE, "w") as f:
+            f.write(code_verifier)
+
+        st.info("Sign in with your Google account to get started.")
+        st.markdown(
+            f'<a href="{auth_url}" target="_self">'
+            '<button style="padding:0.75rem 2rem;font-size:1.1rem;cursor:pointer;">'
+            "🔑 Sign in with Google</button></a>",
+            unsafe_allow_html=True,
+        )
+        st.caption("You only need to do this once.")
