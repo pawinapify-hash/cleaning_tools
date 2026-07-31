@@ -20,7 +20,6 @@ SPEAKER_TYPES = ["Brand Voice", "Consumer Voice", "Influencer & Page", "Publishe
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 OAUTH_CLIENT_FILE = "oauth_client.json"
 TOKEN_FILE = "token.pickle"
-CODE_VERIFIER_FILE = ".code_verifier"
 FIXED_SHEET_URL = "https://docs.google.com/spreadsheets/d/1Hoy7EfkckFdCAWW8ELa3qc41iHpOeJPeOQqjIcfQWRc/edit?gid=1690969829#gid=1690969829"
 
 
@@ -79,10 +78,15 @@ def get_credentials():
                         redirect_uri=get_redirect_uri(),
                     )
                     verifier = None
-                    if os.path.exists(CODE_VERIFIER_FILE):
-                        with open(CODE_VERIFIER_FILE) as f:
-                            verifier = f.read().strip()
-                        os.remove(CODE_VERIFIER_FILE)
+                    raw_state = query_params.get("state")
+                    if raw_state:
+                        try:
+                            decoded = json.loads(
+                                base64.urlsafe_b64decode(raw_state).decode()
+                            )
+                            verifier = decoded.get("cv")
+                        except Exception:
+                            pass
                     flow.fetch_token(code=query_params["code"], code_verifier=verifier)
                     creds = flow.credentials
                     with open(TOKEN_FILE, "wb") as f:
@@ -91,8 +95,6 @@ def get_credentials():
                     st.rerun()
                 except Exception as e:
                     st.error(f"Authentication failed: {e}")
-                    if os.path.exists(CODE_VERIFIER_FILE):
-                        os.remove(CODE_VERIFIER_FILE)
                     st.query_params.clear()
 
     return creds
@@ -262,15 +264,16 @@ with tab_config:
         code_challenge = base64.urlsafe_b64encode(
             hashlib.sha256(code_verifier.encode()).digest()
         ).rstrip(b"=").decode()
+        state_data = base64.urlsafe_b64encode(
+            json.dumps({"cv": code_verifier, "csrf": secrets.token_urlsafe(16)}).encode()
+        ).decode()
         auth_url, _ = flow.authorization_url(
             prompt="consent",
             access_type="offline",
-            state=secrets.token_urlsafe(16),
+            state=state_data,
             code_challenge=code_challenge,
             code_challenge_method="S256",
         )
-        with open(CODE_VERIFIER_FILE, "w") as f:
-            f.write(code_verifier)
 
         st.info("Sign in with your Google account to get started.")
         st.markdown(

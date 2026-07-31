@@ -2,7 +2,6 @@
 service-account.json
 oauth_client.json
 token.pickle
-.code_verifier
 
 # Streamlit secrets
 .streamlit/secrets.toml
