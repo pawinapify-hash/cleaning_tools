@@ -10,8 +10,5 @@ token.pickle
 __pycache__/
 *.pyc
 
-# Output
-Output/
-
 # Temp
 *.tmp

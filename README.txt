@@ -12,26 +12,25 @@ HOW IT WORKS
 1. User signs in with their Google account (one time).
 2. App reads the speaker dictionary from a Google Sheet.
 3. User drops a TalkWalker raw data Excel file.
-4. App tags every row using a 3-step fallback strategy:
+4. App preprocesses the data:
+   a) Renames "Content" column to "Sample Content" if present.
+   b) For certain source types (blogs, online news, newsletters, etc.),
+      replaces the author name with the domain name extracted from the URL.
+5. App tags every row using a 3-step fallback strategy:
    a) Match author name against the dictionary (exact, case-insensitive).
    b) Tag "isComment" rows as Consumer Voice.
    c) Fallback: tag remaining rows as Influencer & Page.
-5. User downloads the tagged Excel file.
+6. User downloads the tagged Excel file.
 
 
 PROJECT FILES
 -------------
 app.py                  Streamlit web app (UI + Google OAuth)
-speaker_tagger.py       Core tagging logic (process(), update_speaker_tags())
+speaker_tagger.py       Core tagging logic (process_with_dict(), update_speaker_tags())
 requirements.txt        Python dependencies
 README.txt              This file
-
-.gitignore              Excludes secrets, tokens, and temp files
-
-update_speakerdict_from_raw_data.ipynb   Original notebook (legacy)
-SpeakerTypeDict/        Local dictionary folder (legacy, not used by app)
-Input/                  Local input folder (legacy, not used by app)
-Output/                 Local output folder (legacy, not used by app)
+.streamlit/             Streamlit config and secrets
+.gitignore              Excludes secrets, tokens, output, and temp files
 
 
 LOCAL SETUP
@@ -99,5 +98,5 @@ The user's Google account must have Viewer access to the sheet.
 NOTE
 ----
 Rows that already contain a "Type of Speaker" tag in tags_customer
-(from TalkWalker) are left untouched. The "Newly Tagged" metric counts
-only rows tagged during the current run, excluding pre-existing tags.
+are left untouched. The "Newly Tagged" metric counts only rows tagged
+during the current run, excluding pre-existing tags.

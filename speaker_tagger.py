@@ -119,25 +119,15 @@ def update_speaker_tags(df, speakertype_dict):
     return df
 
 
-def load_speaker_dict(file_bytes):
+def process_with_dict(raw_data_bytes, speakertype_dict):
     """
-    Load speaker dictionary from Excel bytes.
-    Returns dict: cleaned_username -> 'Type of Speaker/<Speaker Type>'
+    Takes raw data bytes and an existing speaker dict,
+    returns processed DataFrame with speaker tags.
+
+    Returns:
+        tuple: (processed DataFrame, stats dict)
     """
-    df = pd.read_excel(BytesIO(file_bytes))
-
-    df["Username_clean"] = (
-        df["Username"].astype(str).str.strip().str.lower()
-    )
-
-    speakertype_dict = dict(
-        zip(
-            df["Username_clean"],
-            "Type of Speaker/" + df["Speaker Type"].astype(str),
-        )
-    )
-
-    return speakertype_dict
+    return _process_raw(raw_data_bytes, speakertype_dict)
 
 
 def dict_df_to_dict(dict_df):
@@ -153,29 +143,6 @@ def dict_df_to_dict(dict_df):
         )
     )
     return speakertype_dict
-
-
-def process(speaker_dict_bytes, raw_data_bytes):
-    """
-    Takes file bytes for speaker dict and raw data,
-    returns processed DataFrame with speaker tags in tags_customer column.
-
-    Returns:
-        tuple: (processed DataFrame, stats dict)
-    """
-    speakertype_dict = load_speaker_dict(speaker_dict_bytes)
-    return _process_raw(raw_data_bytes, speakertype_dict)
-
-
-def process_with_dict(raw_data_bytes, speakertype_dict):
-    """
-    Takes raw data bytes and an existing speaker dict,
-    returns processed DataFrame with speaker tags.
-
-    Returns:
-        tuple: (processed DataFrame, stats dict)
-    """
-    return _process_raw(raw_data_bytes, speakertype_dict)
 
 
 def _process_raw(raw_data_bytes, speakertype_dict):
