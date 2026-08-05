@@ -11,6 +11,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials as OAuthCredentials
 from google_auth_oauthlib.flow import Flow
 
+from monthly_cleaning import process_monthly_cleaning
 from speaker_tagger import dict_df_to_dict, process_with_dict
 
 import hashlib
@@ -136,6 +137,8 @@ st.markdown(
     .stTabs [data-baseweb="tab"] {
         flex: 1 1 0; justify-content: center; font-size: 1.1rem; font-weight: 600; padding: 0.75rem 0;
     }
+    [data-testid="stSidebar"] { min-width: 240px !important; max-width: 260px !important; }
+    [data-testid="stMetricLabel"] { overflow: visible !important; text-overflow: unset !important; white-space: normal !important; word-break: break-all !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -204,8 +207,6 @@ with st.sidebar:
         label_visibility="collapsed",
     )
     st.divider()
-    st.success("✅ Signed in with Google")
-    st.caption(f"[📝 Edit Dictionary]({FIXED_SHEET_URL})")
 
 # ===========================================================================
 # Feature: Speaker Tag Updater
@@ -308,4 +309,96 @@ if feature == "🏷️ Speaker Tag Updater":
 # ===========================================================================
 elif feature == "📊 Monthly Cleaning Process":
     st.title("📊 Monthly Cleaning Process")
-    st.info("This feature is coming soon.")
+
+    col_ref, col_target = st.columns(2)
+    with col_ref:
+        ref_file = st.file_uploader(
+            "Reference file (Excel)",
+            type=["xlsx", "xls"],
+            key="ref_file",
+        )
+    with col_target:
+        target_file = st.file_uploader(
+            "Target file (Excel)",
+            type=["xlsx", "xls"],
+            key="target_file",
+        )
+
+    st.divider()
+
+    st.subheader("Subtasks")
+    do_sentiment = st.checkbox("1. Update Sticker Sentiment", value=True)
+    do_campaign = st.checkbox("2. Remove Campaign Rows", value=True)
+    do_hide = st.checkbox("3. Remove Hide", value=True)
+
+    any_selected = do_sentiment or do_campaign or do_hide
+    needs_ref = do_sentiment or do_campaign
+    files_ok = any_selected and target_file is not None and (
+        not needs_ref or ref_file is not None
+    )
+
+    if st.button("⚡ Process", type="primary", disabled=not files_ok):
+        tasks = {
+            "update_sticker_sentiment": do_sentiment,
+            "remove_campaign_rows": do_campaign,
+            "remove_hide": do_hide,
+        }
+
+        ref_bytes = ref_file.read() if ref_file else None
+        target_bytes = target_file.read()
+
+        with st.spinner("Processing..."):
+            try:
+                result_df, all_stats = process_monthly_cleaning(
+                    ref_bytes, target_bytes, tasks
+                )
+                st.session_state.mc_result = result_df
+                st.session_state.mc_stats = all_stats
+                st.session_state.mc_filename = target_file.name
+            except Exception as e:
+                st.error(f"Processing failed: {e}")
+                st.stop()
+
+    if "mc_result" in st.session_state:
+        st.divider()
+        st.success(f"Done. {len(st.session_state.mc_result):,} rows remaining.")
+
+        for task_name, stats in st.session_state.mc_stats.items():
+            with st.container(border=True):
+                if "updated" in stats:
+                    st.subheader(f"{task_name}: {stats['updated']:,} updated")
+                elif "removed" in stats:
+                    st.subheader(f"{task_name}: {stats['removed']:,} removed")
+
+                if stats.get("unmatched", 0) > 0:
+                    st.warning(
+                        f"{stats['unmatched']:,} reference URLs not found in target file"
+                    )
+
+                dist = stats.get("distribution", {})
+                if dist:
+                    cols = st.columns(len(dist))
+                    for col, (label, count) in zip(cols, dist.items()):
+                        with col:
+                            st.metric(str(label), f"{count:,}")
+
+        output = BytesIO()
+        with pd.ExcelWriter(
+            output,
+            engine="xlsxwriter",
+            engine_kwargs={"options": {"strings_to_urls": False}},
+        ) as writer:
+            st.session_state.mc_result.to_excel(writer, index=False)
+        output.seek(0)
+
+        out_name = (
+            st.session_state.mc_filename or "output.xlsx"
+        ).replace(".", "_cleaned.")
+
+        st.download_button(
+            label="⬇️ Download Cleaned File",
+            data=output,
+            file_name=out_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+        )
