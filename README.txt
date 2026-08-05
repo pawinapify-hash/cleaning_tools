@@ -1,26 +1,30 @@
 ================================================================================
-  Speaker Tag Updater
+  Cleaning Tools
 ================================================================================
 
-A Streamlit web app that tags TalkWalker export data with speaker types
-(Brand Voice, Consumer Voice, Influencer & Page, Publisher) using a
-dictionary stored in Google Sheets.
+A Streamlit web app with two main features:
+  1. Speaker Tag Updater - tags TalkWalker export data with speaker types
+  2. Monthly Cleaning Process - coming soon
 
 
-HOW IT WORKS
-------------
-1. User signs in with their Google account (one time).
-2. App reads the speaker dictionary from a Google Sheet.
-3. User drops a TalkWalker raw data Excel file.
-4. App preprocesses the data:
-   a) Renames "Content" column to "Sample Content" if present.
-   b) For certain source types (blogs, online news, newsletters, etc.),
-      replaces the author name with the domain name extracted from the URL.
-5. App tags every row using a 3-step fallback strategy:
-   a) Match author name against the dictionary (exact, case-insensitive).
-   b) Tag "isComment" rows as Consumer Voice.
-   c) Fallback: tag remaining rows as Influencer & Page.
-6. User downloads the tagged Excel file.
+FEATURES
+--------
+
+Speaker Tag Updater
+~~~~~~~~~~~~~~~~~~~
+Tags TalkWalker export data with speaker types (Brand Voice, Consumer Voice,
+Influencer & Page, Publisher) using a dictionary stored in Google Sheets.
+
+Process:
+  a) Preprocesses author names by extracting domain names from URLs
+     for certain source types (blogs, online news, newsletters, etc.).
+  b) Matches author names against the dictionary (exact, case-insensitive).
+  c) Tags "isComment" rows as Consumer Voice.
+  d) Fallback: tags remaining rows as Influencer & Page.
+
+Monthly Cleaning Process
+~~~~~~~~~~~~~~~~~~~~~~~~
+Coming soon.
 
 
 PROJECT FILES
@@ -30,7 +34,7 @@ speaker_tagger.py       Core tagging logic (process_with_dict(), update_speaker_
 requirements.txt        Python dependencies
 README.txt              This file
 .streamlit/             Streamlit config and secrets
-.gitignore              Excludes secrets, tokens, output, and temp files
+.gitignore              Excludes secrets, tokens, and temp files
 
 
 LOCAL SETUP
@@ -83,8 +87,9 @@ STREAMLIT CLOUD DEPLOYMENT
 
 GOOGLE SHEET
 ------------
-The app reads from a fixed Google Sheet URL (FIXED_SHEET_URL in app.py).
-The sheet must have these columns in the first worksheet:
+The Speaker Tag Updater reads from a fixed Google Sheet URL
+(FIXED_SHEET_URL in app.py). The sheet must have these columns
+in the first worksheet:
 
     Username      Speaker Type
     ----------    ----------------

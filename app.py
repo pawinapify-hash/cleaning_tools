@@ -120,8 +120,8 @@ def read_dict_from_gsheet(spreadsheet_url, creds):
 # Page setup
 # ---------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Speaker Tag Updater",
-    page_icon="🏷️",
+    page_title="Cleaning Tools",
+    page_icon="🧹",
     layout="wide",
 )
 
@@ -152,113 +152,16 @@ if creds and creds.valid:
 ready = bool(st.session_state.get("creds"))
 
 # ---------------------------------------------------------------------------
-# Tabs
+# Sign-in screen
 # ---------------------------------------------------------------------------
-st.title("🏷️ Speaker Tag Updater")
+if not ready:
+    st.title("🧹 Cleaning Tools")
 
-tab_process, tab_config = st.tabs(["📤 Process", "⚙️ Configuration"])
-
-# ===========================================================================
-# Tab 1: Process
-# ===========================================================================
-with tab_process:
-    raw_file = st.file_uploader(
-        "Drag and drop your TalkWalker raw data Excel here",
-        type=["xlsx", "xls"],
-    )
-
-    if st.button(
-        "⚡ Process",
-        type="primary",
-        disabled=(raw_file is None or not ready),
-    ):
-        with st.spinner("Reading dictionary from Google Sheets..."):
-            try:
-                dict_df = read_dict_from_gsheet(
-                    st.session_state.sheet_url, st.session_state.creds
-                )
-                speakertype_dict = dict_df_to_dict(dict_df)
-            except Exception as e:
-                st.error(
-                    f"Failed to read Google Sheet. "
-                    f"Make sure your account has access.\n\nError: {e}"
-                )
-                st.stop()
-
-        with st.spinner("Processing..."):
-            df, stats = process_with_dict(raw_file.read(), speakertype_dict)
-
-        st.success(
-            f"Done. {stats['total_rows']:,} rows processed. "
-            f"Dictionary: {len(speakertype_dict)} entries."
-        )
-
-        tags_col = df["tags_customer"].astype(str)
-
-        type_counts = {}
-        for speaker_type in SPEAKER_TYPES:
-            type_counts[speaker_type] = tags_col.str.contains(
-                f"Type of Speaker/{speaker_type}", na=False
-            ).sum()
-
-        col_a, col_b = st.columns(2)
-        with col_a:
-            with st.container(border=True):
-                st.metric("Total Rows", f"{stats['total_rows']:,}")
-        with col_b:
-            with st.container(border=True):
-                st.metric("Newly Tagged", f"{stats['newly_tagged']:,}")
-
-        st.caption("Tags by speaker type")
-        c1, c2, c3, c4 = st.columns(4)
-        for col, (stype, count) in zip([c1, c2, c3, c4], type_counts.items()):
-            with col:
-                with st.container(border=True):
-                    st.metric(stype, f"{count:,}")
-
-        st.subheader("Data Preview")
-        st.dataframe(df.head(100), use_container_width=True)
-
-        output = BytesIO()
-        with pd.ExcelWriter(
-            output,
-            engine="xlsxwriter",
-            engine_kwargs={"options": {"strings_to_urls": False}},
-        ) as writer:
-            df.to_excel(writer, index=False)
-        output.seek(0)
-
-        st.download_button(
-            label="⬇️ Download Tagged Excel",
-            data=output,
-            file_name=raw_file.name.replace(".", "_tagged."),
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary",
-        )
-
-# ===========================================================================
-# Tab 2: Configuration
-# ===========================================================================
-with tab_config:
     if oauth_config is None:
         st.warning(
             f"No OAuth config found. Add `{OAUTH_CLIENT_FILE}` "
             "to the project folder, or set `[oauth]` in Streamlit secrets."
         )
-    elif creds and creds.valid:
-        st.success("✅ Signed in with Google")
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Status", "Connected")
-        with col2:
-            st.markdown(
-                f'<a href="{FIXED_SHEET_URL}" target="_blank">'
-                '<button style="width:100%;padding:0.5rem;font-size:1rem;cursor:pointer;">'
-                "📝 Edit Source</button></a>",
-                unsafe_allow_html=True,
-            )
-            st.caption("Opens the dictionary Google Sheet in a new tab")
     else:
         flow = Flow.from_client_config(
             oauth_config,
@@ -288,3 +191,121 @@ with tab_config:
             unsafe_allow_html=True,
         )
         st.caption("You only need to do this once.")
+    st.stop()
+
+# ---------------------------------------------------------------------------
+# Sidebar navigation
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.title("🧹 Cleaning Tools")
+    feature = st.radio(
+        "Select Feature",
+        ["🏷️ Speaker Tag Updater", "📊 Monthly Cleaning Process"],
+        label_visibility="collapsed",
+    )
+    st.divider()
+    st.success("✅ Signed in with Google")
+    st.caption(f"[📝 Edit Dictionary]({FIXED_SHEET_URL})")
+
+# ===========================================================================
+# Feature: Speaker Tag Updater
+# ===========================================================================
+if feature == "🏷️ Speaker Tag Updater":
+    st.title("🏷️ Speaker Tag Updater")
+
+    tab_process, tab_config = st.tabs(["📤 Process", "⚙️ Configuration"])
+
+    with tab_process:
+        raw_file = st.file_uploader(
+            "Drag and drop your TalkWalker raw data Excel here",
+            type=["xlsx", "xls"],
+        )
+
+        if st.button(
+            "⚡ Process",
+            type="primary",
+            disabled=(raw_file is None),
+        ):
+            with st.spinner("Reading dictionary from Google Sheets..."):
+                try:
+                    dict_df = read_dict_from_gsheet(
+                        st.session_state.sheet_url, st.session_state.creds
+                    )
+                    speakertype_dict = dict_df_to_dict(dict_df)
+                except Exception as e:
+                    st.error(
+                        f"Failed to read Google Sheet. "
+                        f"Make sure your account has access.\n\nError: {e}"
+                    )
+                    st.stop()
+
+            with st.spinner("Processing..."):
+                df, stats = process_with_dict(raw_file.read(), speakertype_dict)
+
+            st.success(
+                f"Done. {stats['total_rows']:,} rows processed. "
+                f"Dictionary: {len(speakertype_dict)} entries."
+            )
+
+            tags_col = df["tags_customer"].astype(str)
+
+            type_counts = {}
+            for speaker_type in SPEAKER_TYPES:
+                type_counts[speaker_type] = tags_col.str.contains(
+                    f"Type of Speaker/{speaker_type}", na=False
+                ).sum()
+
+            col_a, col_b = st.columns(2)
+            with col_a:
+                with st.container(border=True):
+                    st.metric("Total Rows", f"{stats['total_rows']:,}")
+            with col_b:
+                with st.container(border=True):
+                    st.metric("Newly Tagged", f"{stats['newly_tagged']:,}")
+
+            st.caption("Tags by speaker type")
+            c1, c2, c3, c4 = st.columns(4)
+            for col, (stype, count) in zip([c1, c2, c3, c4], type_counts.items()):
+                with col:
+                    with st.container(border=True):
+                        st.metric(stype, f"{count:,}")
+
+            st.subheader("Data Preview")
+            st.dataframe(df.head(100), use_container_width=True)
+
+            output = BytesIO()
+            with pd.ExcelWriter(
+                output,
+                engine="xlsxwriter",
+                engine_kwargs={"options": {"strings_to_urls": False}},
+            ) as writer:
+                df.to_excel(writer, index=False)
+            output.seek(0)
+
+            st.download_button(
+                label="⬇️ Download Tagged Excel",
+                data=output,
+                file_name=raw_file.name.replace(".", "_tagged."),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+            )
+
+    with tab_config:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Status", "Connected")
+        with col2:
+            st.markdown(
+                f'<a href="{FIXED_SHEET_URL}" target="_blank">'
+                '<button style="width:100%;padding:0.5rem;font-size:1rem;cursor:pointer;">'
+                "📝 Open Dictionary Sheet</button></a>",
+                unsafe_allow_html=True,
+            )
+            st.caption("Opens the dictionary Google Sheet in a new tab")
+
+# ===========================================================================
+# Feature: Monthly Cleaning Process
+# ===========================================================================
+elif feature == "📊 Monthly Cleaning Process":
+    st.title("📊 Monthly Cleaning Process")
+    st.info("This feature is coming soon.")
