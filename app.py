@@ -44,7 +44,6 @@ def load_oauth_config():
 
     return None
 
-
 def get_redirect_uri():
     if os.name != "nt":
         return "https://speakertype-tagging.streamlit.app"
