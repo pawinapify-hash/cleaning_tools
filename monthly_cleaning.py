@@ -3,7 +3,7 @@ from io import BytesIO
 import pandas as pd
 
 MESSAGE_TYPES = {
-    "Message type/compliment": "Positiver",
+    "Message type/compliment": "Positive",
     "Message type/information": "Neutral",
     "Message type/participation": "Neutral",
     "Message type/complaint": "Negative",
