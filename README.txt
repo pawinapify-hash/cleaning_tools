@@ -100,6 +100,8 @@ LOCAL SETUP
       [oauth]
       client_id = "..."
       client_secret = "..."
+      # Optional but recommended for cloud apps with custom URL
+      # redirect_uri = "https://<your-app>.streamlit.app"
 
 5. Run the app:
       streamlit run app.py --server.port 8511
@@ -132,13 +134,16 @@ STREAMLIT CLOUD DEPLOYMENT
       [oauth]
       client_id = "..."
       client_secret = "..."
+      # Optional explicit override for redirect URL
+      # redirect_uri = "https://<your-app>.streamlit.app"
 
-3. The app auto-detects redirect URI:
-      Local:       http://localhost:8511
-      Deployed:    https://speakertype-tagging.streamlit.app
+3. Redirect URI behavior:
+      - If oauth.redirect_uri is set in secrets, the app uses it directly.
+      - Otherwise the app auto-detects the current host URL.
+      - Local fallback is http://localhost:8511 (or current local Streamlit port).
 
-4. Make sure both URIs are listed in the OAuth client authorized
-   redirect URIs in Google Cloud Console.
+4. In Google Cloud Console OAuth client, add every redirect URI you will use,
+   including the exact deployed app URL and local URL.
 
 
 GOOGLE SHEET (SPEAKER TAG UPDATER)

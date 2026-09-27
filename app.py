@@ -44,13 +44,46 @@ def load_oauth_config():
 
     return None
 
+def _secret_redirect_uri():
+    try:
+        oauth_cfg = st.secrets.get("oauth", {})
+        redirect_uri = str(oauth_cfg.get("redirect_uri", "")).strip()
+        if redirect_uri:
+            return redirect_uri.rstrip("/")
+    except Exception:
+        pass
+    return None
+
+
+def _detect_external_base_url():
+    try:
+        headers = getattr(st.context, "headers", None)
+        if headers:
+            host = headers.get("x-forwarded-host") or headers.get("host")
+            proto = headers.get("x-forwarded-proto") or "https"
+            if host:
+                return f"{proto}://{host}".rstrip("/")
+    except Exception:
+        pass
+
+    addr = os.environ.get("STREAMLIT_SERVER_ADDRESS", "").strip()
+    if addr and addr not in {"localhost", "127.0.0.1"}:
+        return f"https://{addr}".rstrip("/")
+
+    return None
+
+
 def get_redirect_uri():
-    if os.name != "nt":
-        return "https://speakertype-tagging.streamlit.app"
-    addr = os.environ.get("STREAMLIT_SERVER_ADDRESS", "")
-    if addr and addr != "localhost":
-        return "https://speakertype-tagging.streamlit.app"
-    return "http://localhost:8511"
+    explicit_redirect = _secret_redirect_uri()
+    if explicit_redirect:
+        return explicit_redirect
+
+    external_base_url = _detect_external_base_url()
+    if external_base_url:
+        return external_base_url
+
+    local_port = os.environ.get("STREAMLIT_SERVER_PORT", "8511").strip() or "8511"
+    return f"http://localhost:{local_port}"
 
 
 def get_credentials():
