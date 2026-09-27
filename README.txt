@@ -26,6 +26,11 @@ Monthly Cleaning Process
 ~~~~~~~~~~~~~~~~~~~~~~~~
 Monthly Cleaning is now available with 5 main subtasks:
 
+Month filter:
+  - Users can choose one month (January-December) or "All Month".
+  - All selected subtasks (1-5) apply only to rows in the selected month
+    based on the "Date" column.
+
   1) Update Sticker Sentiment
      - Uses the Reference file to update "Sentiment" in the Target file
        by matching URL.
@@ -117,6 +122,7 @@ Reference file should include at least:
   - tags_customer
 
 Target file should include at least:
+  - Date                         (required for month filtering)
   - URL
   - ParentURL                    (for Match Comment Pillar to Post)
   - Category                     (for Match Comment Pillar to Post)
@@ -168,3 +174,5 @@ NOTES
   and unmatched counts when applicable (reference URL or parent post matching).
 - Duplicate URL Check requires review confirmation before final export when
   duplicate rows are found.
+- When a specific month is selected, all subtasks only affect rows in that
+  month.

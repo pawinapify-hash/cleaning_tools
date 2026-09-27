@@ -9,8 +9,63 @@ MESSAGE_TYPES = {
     "Message type/complaint": "Negative",
 }
 
+MONTH_NAME_TO_NUMBER = {
+    "January": 1,
+    "February": 2,
+    "March": 3,
+    "April": 4,
+    "May": 5,
+    "June": 6,
+    "July": 7,
+    "August": 8,
+    "September": 9,
+    "October": 10,
+    "November": 11,
+    "December": 12,
+}
 
-def update_sticker_sentiment(ref_df, target_df):
+
+def get_month_scope_mask(target_df, month_filter):
+    if not isinstance(month_filter, str) or month_filter == "All Month":
+        return pd.Series(True, index=target_df.index), {
+            "month_filter": "All Month",
+            "rows_in_scope": len(target_df),
+            "invalid_date_rows": 0,
+            "missing_date_column": False,
+        }
+
+    if "Date" not in target_df.columns:
+        return pd.Series(False, index=target_df.index), {
+            "month_filter": month_filter,
+            "rows_in_scope": 0,
+            "invalid_date_rows": 0,
+            "missing_date_column": True,
+        }
+
+    month_num = MONTH_NAME_TO_NUMBER.get(month_filter)
+    if month_num is None:
+        return pd.Series(True, index=target_df.index), {
+            "month_filter": "All Month",
+            "rows_in_scope": len(target_df),
+            "invalid_date_rows": 0,
+            "missing_date_column": False,
+        }
+
+    parsed_date = pd.to_datetime(target_df["Date"], errors="coerce")
+    parsed_dayfirst = pd.to_datetime(target_df["Date"], errors="coerce", dayfirst=True)
+    parsed_date = parsed_date.fillna(parsed_dayfirst)
+    scope_mask = parsed_date.dt.month == month_num
+    scope_mask = scope_mask.fillna(False)
+
+    return scope_mask, {
+        "month_filter": month_filter,
+        "rows_in_scope": int(scope_mask.sum()),
+        "invalid_date_rows": int(parsed_date.isna().sum()),
+        "missing_date_column": False,
+    }
+
+
+def update_sticker_sentiment(ref_df, target_df, scope_mask=None):
     target_df = target_df.copy()
 
     mask_blank_content = ref_df["content"].isna() | (ref_df["content"].astype(str).str.strip() == "")
@@ -32,14 +87,19 @@ def update_sticker_sentiment(ref_df, target_df):
 
     target_urls = target_df["URL"].astype(str).str.strip()
     matched = target_urls.isin(url_map.index)
+
+    if scope_mask is not None:
+        mask_scope = scope_mask.reindex(target_df.index, fill_value=False).astype(bool)
+        matched = matched & mask_scope
+
     target_df.loc[matched, "Sentiment"] = target_urls[matched].map(url_map)
 
-    unmatched = len(url_map) - matched.sum()
+    unmatched = len(url_map) - int(matched.sum())
 
-    return target_df, {"updated": matched.sum(), "distribution": distribution, "unmatched": unmatched}
+    return target_df, {"updated": int(matched.sum()), "distribution": distribution, "unmatched": unmatched}
 
 
-def remove_campaign_rows(ref_df, target_df):
+def remove_campaign_rows(ref_df, target_df, scope_mask=None):
     campaign_mask = ref_df["tags_customer"].fillna("").str.contains("Campaign/", na=False)
     campaign_rows = ref_df[campaign_mask]
 
@@ -54,15 +114,20 @@ def remove_campaign_rows(ref_df, target_df):
 
     before = len(target_df)
     matched = target_urls.isin(campaign_urls)
+
+    if scope_mask is not None:
+        mask_scope = scope_mask.reindex(target_df.index, fill_value=False).astype(bool)
+        matched = matched & mask_scope
+
     target_df = target_df[~matched]
     after = len(target_df)
 
-    unmatched = len(campaign_urls) - matched.sum()
+    unmatched = len(campaign_urls) - int(matched.sum())
 
     return target_df, {"removed": before - after, "distribution": distribution, "unmatched": unmatched}
 
 
-def remove_hide(target_df):
+def remove_hide(target_df, scope_mask=None):
     before = len(target_df)
 
     col_show_corp = "ShowCorporate"
@@ -76,13 +141,18 @@ def remove_hide(target_df):
         (target_df[col_show_corp].astype(str).str.strip() == "Hide")
         & (target_df[col_show_cbm].astype(str).str.strip() == "Hide")
     )
+
+    if scope_mask is not None:
+        mask_scope = scope_mask.reindex(target_df.index, fill_value=False).astype(bool)
+        hide_mask = hide_mask & mask_scope
+
     target_df = target_df[~hide_mask]
     after = len(target_df)
 
     return target_df, {"removed": before - after}
 
 
-def match_comment_pillar_to_post(target_df):
+def match_comment_pillar_to_post(target_df, scope_mask=None):
     target_df = target_df.copy()
 
     required_cols = ["URL", "ParentURL", "Category", "Sub Category"]
@@ -96,6 +166,10 @@ def match_comment_pillar_to_post(target_df):
             "changed_examples": pd.DataFrame(),
             "unmatched_label": "comments have ParentURL but no matching post URL",
         }
+
+    if scope_mask is None:
+        scope_mask = pd.Series(True, index=target_df.index)
+    scope_mask = scope_mask.reindex(target_df.index, fill_value=False).astype(bool)
 
     target_df["_mc_row_id"] = range(len(target_df))
 
@@ -112,8 +186,9 @@ def match_comment_pillar_to_post(target_df):
         .set_index("_url_clean")
     )
 
-    matched_mask = parent_has_value & parent_clean.isin(post_lookup.index)
-    unmatched = int(parent_has_value.sum() - matched_mask.sum())
+    candidate_comments = parent_has_value & scope_mask
+    matched_mask = candidate_comments & parent_clean.isin(post_lookup.index)
+    unmatched = int(candidate_comments.sum() - matched_mask.sum())
 
     if matched_mask.sum() == 0:
         target_df.drop(columns=["_mc_row_id"], inplace=True)
@@ -186,7 +261,7 @@ def match_comment_pillar_to_post(target_df):
     }
 
 
-def find_duplicate_urls(target_df):
+def find_duplicate_urls(target_df, scope_mask=None):
     target_df = target_df.copy()
 
     if "URL" not in target_df.columns:
@@ -194,9 +269,16 @@ def find_duplicate_urls(target_df):
 
     target_df["_row_id"] = range(len(target_df))
 
+    if scope_mask is None:
+        scope_mask = pd.Series(True, index=target_df.index)
+    scope_mask = scope_mask.reindex(target_df.index, fill_value=False).astype(bool)
+
     url_clean = target_df["URL"].astype(str).str.strip()
     non_blank = target_df["URL"].notna() & (url_clean != "")
-    dup_mask = non_blank & url_clean.duplicated(keep=False)
+
+    scoped_idx = target_df.index[scope_mask & non_blank]
+    dup_mask = pd.Series(False, index=target_df.index)
+    dup_mask.loc[scoped_idx] = url_clean.loc[scoped_idx].duplicated(keep=False)
 
     dup_df = target_df.loc[dup_mask].copy()
     if dup_df.empty:
@@ -208,7 +290,7 @@ def find_duplicate_urls(target_df):
     return dup_df
 
 
-def process_monthly_cleaning(ref_data_bytes, target_data_bytes, tasks):
+def process_monthly_cleaning(ref_data_bytes, target_data_bytes, tasks, month_filter="All Month"):
     target_df = pd.read_excel(BytesIO(target_data_bytes))
 
     needs_ref = tasks.get("update_sticker_sentiment") or tasks.get("remove_campaign_rows")
@@ -219,21 +301,24 @@ def process_monthly_cleaning(ref_data_bytes, target_data_bytes, tasks):
         ref_df = pd.read_excel(BytesIO(ref_data_bytes))
 
     all_stats = {}
+    scope_mask, scope_info = get_month_scope_mask(target_df, month_filter)
 
     if tasks.get("update_sticker_sentiment"):
-        target_df, stats = update_sticker_sentiment(ref_df, target_df)
+        target_df, stats = update_sticker_sentiment(ref_df, target_df, scope_mask=scope_mask)
         all_stats["Sticker Sentiment"] = stats
 
     if tasks.get("remove_campaign_rows"):
-        target_df, stats = remove_campaign_rows(ref_df, target_df)
+        target_df, stats = remove_campaign_rows(ref_df, target_df, scope_mask=scope_mask)
         all_stats["Campaign Rows"] = stats
+        scope_mask, _ = get_month_scope_mask(target_df, month_filter)
 
     if tasks.get("remove_hide"):
-        target_df, stats = remove_hide(target_df)
+        target_df, stats = remove_hide(target_df, scope_mask=scope_mask)
         all_stats["Hide Rows"] = stats
+        scope_mask, _ = get_month_scope_mask(target_df, month_filter)
 
     if tasks.get("match_comment_pillar_to_post"):
-        target_df, stats = match_comment_pillar_to_post(target_df)
+        target_df, stats = match_comment_pillar_to_post(target_df, scope_mask=scope_mask)
         all_stats["Match Comment Pillar to Post"] = stats
 
-    return target_df, all_stats
+    return target_df, all_stats, scope_info

@@ -11,7 +11,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials as OAuthCredentials
 from google_auth_oauthlib.flow import Flow
 
-from monthly_cleaning import find_duplicate_urls, process_monthly_cleaning
+from monthly_cleaning import find_duplicate_urls, get_month_scope_mask, process_monthly_cleaning
 from speaker_tagger import dict_df_to_dict, process_with_dict
 
 import hashlib
@@ -358,6 +358,28 @@ elif feature == "📊 Monthly Cleaning Process":
 
     st.divider()
 
+    month_options = [
+        "All Month",
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ]
+    selected_month = st.selectbox(
+        "Month Filter",
+        month_options,
+        index=0,
+        help="Applies selected subtasks only to rows in this month (by Date column).",
+    )
+
     st.subheader("Subtasks")
     do_sentiment = st.checkbox("1. Update Sticker Sentiment", value=True)
     do_campaign = st.checkbox("2. Remove Campaign Rows", value=True)
@@ -389,6 +411,8 @@ elif feature == "📊 Monthly Cleaning Process":
             "mc_duplicate_message",
             "mc_match_preview_parent",
             "mc_match_preview_table",
+            "mc_scope_info",
+            "mc_month_filter",
         ]:
             st.session_state.pop(key, None)
 
@@ -397,15 +421,18 @@ elif feature == "📊 Monthly Cleaning Process":
 
         with st.spinner("Processing..."):
             try:
-                result_df, all_stats = process_monthly_cleaning(
-                    ref_bytes, target_bytes, tasks
+                result_df, all_stats, scope_info = process_monthly_cleaning(
+                    ref_bytes, target_bytes, tasks, month_filter=selected_month
                 )
                 st.session_state.mc_result_base = result_df
                 st.session_state.mc_stats = all_stats
                 st.session_state.mc_filename = target_file.name
+                st.session_state.mc_scope_info = scope_info
+                st.session_state.mc_month_filter = selected_month
 
                 if do_duplicate:
-                    duplicate_df = find_duplicate_urls(result_df)
+                    duplicate_scope_mask, _ = get_month_scope_mask(result_df, selected_month)
+                    duplicate_df = find_duplicate_urls(result_df, scope_mask=duplicate_scope_mask)
                     if duplicate_df.empty:
                         st.session_state.mc_result_final = result_df
                         st.session_state.mc_duplicate_pending = False
@@ -438,6 +465,24 @@ elif feature == "📊 Monthly Cleaning Process":
             )
         else:
             st.success(f"Done. {row_count:,} rows remaining.")
+
+        scope_info = st.session_state.get("mc_scope_info", {})
+        month_filter = st.session_state.get("mc_month_filter", "All Month")
+        if month_filter == "All Month":
+            st.caption("Month filter: All Month (all rows are in scope).")
+        elif scope_info.get("missing_date_column"):
+            st.warning(
+                "Month filter was selected but the target file has no 'Date' column. "
+                "No rows were in scope for monthly filtering."
+            )
+        else:
+            st.caption(
+                f"Month filter: {month_filter} | Rows in scope: {scope_info.get('rows_in_scope', 0):,}"
+            )
+            if scope_info.get("invalid_date_rows", 0) > 0:
+                st.caption(
+                    f"Rows with invalid/unreadable Date values: {scope_info.get('invalid_date_rows', 0):,}"
+                )
 
         for task_name, stats in st.session_state.mc_stats.items():
             with st.container(border=True):
