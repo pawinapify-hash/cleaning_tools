@@ -329,9 +329,10 @@ elif feature == "📊 Monthly Cleaning Process":
     do_sentiment = st.checkbox("1. Update Sticker Sentiment", value=True)
     do_campaign = st.checkbox("2. Remove Campaign Rows", value=True)
     do_hide = st.checkbox("3. Remove Hide", value=True)
-    do_duplicate = st.checkbox("4. Duplicate URL Check", value=False)
+    do_match_pillar = st.checkbox("4. Match Comment Pillar to Post", value=False)
+    do_duplicate = st.checkbox("5. Duplicate URL Check", value=False)
 
-    any_selected = do_sentiment or do_campaign or do_hide or do_duplicate
+    any_selected = do_sentiment or do_campaign or do_hide or do_match_pillar or do_duplicate
     needs_ref = do_sentiment or do_campaign
     files_ok = any_selected and target_file is not None and (
         not needs_ref or ref_file is not None
@@ -342,6 +343,7 @@ elif feature == "📊 Monthly Cleaning Process":
             "update_sticker_sentiment": do_sentiment,
             "remove_campaign_rows": do_campaign,
             "remove_hide": do_hide,
+            "match_comment_pillar_to_post": do_match_pillar,
         }
 
         for key in [
@@ -352,6 +354,8 @@ elif feature == "📊 Monthly Cleaning Process":
             "mc_duplicate_pending",
             "mc_duplicate_review",
             "mc_duplicate_message",
+            "mc_match_preview_parent",
+            "mc_match_preview_table",
         ]:
             st.session_state.pop(key, None)
 
@@ -410,9 +414,8 @@ elif feature == "📊 Monthly Cleaning Process":
                     st.subheader(f"{task_name}: {stats['removed']:,} removed")
 
                 if stats.get("unmatched", 0) > 0:
-                    st.warning(
-                        f"{stats['unmatched']:,} reference URLs not found in target file"
-                    )
+                    unmatched_label = stats.get("unmatched_label", "reference URLs not found in target file")
+                    st.warning(f"{stats['unmatched']:,} {unmatched_label}")
 
                 dist = stats.get("distribution", {})
                 if dist:
@@ -420,6 +423,53 @@ elif feature == "📊 Monthly Cleaning Process":
                     for col, (label, count) in zip(cols, dist.items()):
                         with col:
                             st.metric(str(label), f"{count:,}")
+
+        match_stats = st.session_state.mc_stats.get("Match Comment Pillar to Post")
+        if match_stats is not None:
+            missing_cols = match_stats.get("missing_columns", [])
+            if missing_cols:
+                st.warning(
+                    "Match Comment Pillar to Post skipped: missing columns "
+                    + ", ".join(missing_cols)
+                )
+
+            post_summary = match_stats.get("post_summary")
+            if isinstance(post_summary, pd.DataFrame) and not post_summary.empty:
+                st.caption("Updated comments by parent post URL")
+                st.dataframe(post_summary, use_container_width=True, hide_index=True)
+
+                selected_post = st.selectbox(
+                    "Select parent post URL to view updated comment examples",
+                    post_summary["Post URL"].tolist(),
+                    key="mc_match_selected_post",
+                )
+
+                if st.button("View Updated Comment Examples", key="mc_match_preview_button"):
+                    examples_df = match_stats.get("changed_examples", pd.DataFrame())
+                    preview_df = examples_df[examples_df["ParentURL"] == selected_post].copy()
+                    preview_df = preview_df[
+                        [
+                            "Comment URL",
+                            "Category (Before)",
+                            "Category (After)",
+                            "Sub Category (Before)",
+                            "Sub Category (After)",
+                        ]
+                    ]
+                    st.session_state.mc_match_preview_parent = selected_post
+                    st.session_state.mc_match_preview_table = preview_df
+
+                if "mc_match_preview_table" in st.session_state:
+                    preview_parent = st.session_state.get("mc_match_preview_parent", "")
+                    st.caption(f"Updated comment examples for parent post: {preview_parent}")
+                    st.dataframe(
+                        st.session_state["mc_match_preview_table"],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+            elif not missing_cols:
+                st.caption("No comment rows needed Category/Sub Category updates.")
 
         if pending_duplicate:
             st.divider()

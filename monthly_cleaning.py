@@ -82,6 +82,110 @@ def remove_hide(target_df):
     return target_df, {"removed": before - after}
 
 
+def match_comment_pillar_to_post(target_df):
+    target_df = target_df.copy()
+
+    required_cols = ["URL", "ParentURL", "Category", "Sub Category"]
+    missing_cols = [col for col in required_cols if col not in target_df.columns]
+    if missing_cols:
+        return target_df, {
+            "updated": 0,
+            "unmatched": 0,
+            "missing_columns": missing_cols,
+            "post_summary": pd.DataFrame(columns=["Post URL", "Updated Comments"]),
+            "changed_examples": pd.DataFrame(),
+            "unmatched_label": "comments have ParentURL but no matching post URL",
+        }
+
+    target_df["_mc_row_id"] = range(len(target_df))
+
+    parent_clean = target_df["ParentURL"].astype(str).str.strip()
+    parent_has_value = target_df["ParentURL"].notna() & (parent_clean != "")
+
+    post_clean = target_df["URL"].astype(str).str.strip()
+    post_has_value = target_df["URL"].notna() & (post_clean != "")
+
+    post_lookup = (
+        target_df.loc[post_has_value, ["URL", "Category", "Sub Category"]]
+        .assign(_url_clean=post_clean[post_has_value])
+        .drop_duplicates(subset="_url_clean", keep="first")
+        .set_index("_url_clean")
+    )
+
+    matched_mask = parent_has_value & parent_clean.isin(post_lookup.index)
+    unmatched = int(parent_has_value.sum() - matched_mask.sum())
+
+    if matched_mask.sum() == 0:
+        target_df.drop(columns=["_mc_row_id"], inplace=True)
+        return target_df, {
+            "updated": 0,
+            "unmatched": unmatched,
+            "post_summary": pd.DataFrame(columns=["Post URL", "Updated Comments"]),
+            "changed_examples": pd.DataFrame(),
+            "unmatched_label": "comments have ParentURL but no matching post URL",
+        }
+
+    mapped_category = parent_clean[matched_mask].map(post_lookup["Category"])
+    mapped_sub_category = parent_clean[matched_mask].map(post_lookup["Sub Category"])
+
+    before_category = target_df.loc[matched_mask, "Category"].copy()
+    before_sub_category = target_df.loc[matched_mask, "Sub Category"].copy()
+
+    before_category_cmp = before_category.fillna("").astype(str)
+    before_sub_cmp = before_sub_category.fillna("").astype(str)
+    after_category_cmp = mapped_category.fillna("").astype(str)
+    after_sub_cmp = mapped_sub_category.fillna("").astype(str)
+
+    changed_rows = (before_category_cmp != after_category_cmp) | (before_sub_cmp != after_sub_cmp)
+
+    target_df.loc[matched_mask, "Category"] = mapped_category.values
+    target_df.loc[matched_mask, "Sub Category"] = mapped_sub_category.values
+
+    changed_index = mapped_category.index[changed_rows]
+    updated = int(len(changed_index))
+
+    if updated == 0:
+        target_df.drop(columns=["_mc_row_id"], inplace=True)
+        return target_df, {
+            "updated": 0,
+            "unmatched": unmatched,
+            "post_summary": pd.DataFrame(columns=["Post URL", "Updated Comments"]),
+            "changed_examples": pd.DataFrame(),
+            "unmatched_label": "comments have ParentURL but no matching post URL",
+        }
+
+    changed_examples = pd.DataFrame(
+        {
+            "_mc_row_id": target_df.loc[changed_index, "_mc_row_id"].values,
+            "ParentURL": target_df.loc[changed_index, "ParentURL"].astype(str).str.strip().values,
+            "Comment URL": target_df.loc[changed_index, "URL"].values,
+            "Category (Before)": before_category.loc[changed_index].values,
+            "Category (After)": target_df.loc[changed_index, "Category"].values,
+            "Sub Category (Before)": before_sub_category.loc[changed_index].values,
+            "Sub Category (After)": target_df.loc[changed_index, "Sub Category"].values,
+        }
+    )
+
+    post_summary = (
+        changed_examples.groupby("ParentURL", dropna=False)
+        .size()
+        .reset_index(name="Updated Comments")
+        .rename(columns={"ParentURL": "Post URL"})
+        .sort_values("Updated Comments", ascending=False)
+        .reset_index(drop=True)
+    )
+
+    target_df.drop(columns=["_mc_row_id"], inplace=True)
+
+    return target_df, {
+        "updated": updated,
+        "unmatched": unmatched,
+        "post_summary": post_summary,
+        "changed_examples": changed_examples,
+        "unmatched_label": "comments have ParentURL but no matching post URL",
+    }
+
+
 def find_duplicate_urls(target_df):
     target_df = target_df.copy()
 
@@ -127,5 +231,9 @@ def process_monthly_cleaning(ref_data_bytes, target_data_bytes, tasks):
     if tasks.get("remove_hide"):
         target_df, stats = remove_hide(target_df)
         all_stats["Hide Rows"] = stats
+
+    if tasks.get("match_comment_pillar_to_post"):
+        target_df, stats = match_comment_pillar_to_post(target_df)
+        all_stats["Match Comment Pillar to Post"] = stats
 
     return target_df, all_stats

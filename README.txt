@@ -1,4 +1,4 @@
-﻿================================================================================
+================================================================================
   Cleaning Tools
 ================================================================================
 
@@ -24,7 +24,7 @@ Process:
 
 Monthly Cleaning Process
 ~~~~~~~~~~~~~~~~~~~~~~~~
-Monthly Cleaning is now available with 4 main subtasks:
+Monthly Cleaning is now available with 5 main subtasks:
 
   1) Update Sticker Sentiment
      - Uses the Reference file to update "Sentiment" in the Target file
@@ -44,8 +44,18 @@ Monthly Cleaning is now available with 4 main subtasks:
          ShowCorporate
          ShowCBM/SCGP/SCGC/SCGD
 
-  4) Duplicate URL Check
-     - Finds duplicate links from column "URL" after core cleaning tasks finish.
+  4) Match Comment Pillar to Post
+     - Checks only rows where "ParentURL" is not blank.
+     - If a matching post exists (URL == ParentURL), updates comment
+       "Category" and "Sub Category" to match that parent post.
+     - Returns summary of updated comments and unmatched parent links.
+     - Shows grouped summary by parent post URL (sorted by highest updated count).
+     - Users can select a parent post URL and click to view comment examples
+       with before/after Category and Sub Category.
+
+  5) Duplicate URL Check
+     - Runs after all other selected subtasks, including Match Comment Pillar to Post.
+     - Finds duplicate links from column "URL".
      - Shows only duplicate URL rows in an editable review table.
      - Users can edit values directly, mark rows for deletion, then click
        "Confirm Duplicate Review" before export is unlocked.
@@ -59,7 +69,7 @@ PROJECT FILES
 -------------
 app.py                  Streamlit web app (UI + Google OAuth + both features)
 speaker_tagger.py       Speaker tagging core logic
-monthly_cleaning.py     Monthly cleaning core logic (4 subtasks incl. duplicate review)
+monthly_cleaning.py     Monthly cleaning core logic (5 subtasks incl. review flows)
 requirements.txt        Python dependencies
 readme.txt              This file
 .streamlit/             Streamlit config and secrets
@@ -106,6 +116,9 @@ Reference file should include at least:
 
 Target file should include at least:
   - URL
+  - ParentURL                    (for Match Comment Pillar to Post)
+  - Category                     (for Match Comment Pillar to Post)
+  - Sub Category                 (for Match Comment Pillar to Post)
   - Sentiment                    (for sentiment update)
   - ShowCorporate                (for Remove Hide)
   - ShowCBM/SCGP/SCGC/SCGD       (for Remove Hide)
@@ -147,6 +160,6 @@ NOTES
 - Existing "Type of Speaker" tags in tags_customer are preserved.
 - "Newly Tagged" counts only tags added in the current run.
 - Monthly Cleaning shows per-task stats (updated/removed), tag distribution,
-  and unmatched reference URL count when applicable.
+  and unmatched counts when applicable (reference URL or parent post matching).
 - Duplicate URL Check requires review confirmation before final export when
   duplicate rows are found.
