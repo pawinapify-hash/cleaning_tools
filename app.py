@@ -11,7 +11,7 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials as OAuthCredentials
 from google_auth_oauthlib.flow import Flow
 
-from monthly_cleaning import process_monthly_cleaning
+from monthly_cleaning import find_duplicate_urls, process_monthly_cleaning
 from speaker_tagger import dict_df_to_dict, process_with_dict
 
 import hashlib
@@ -329,8 +329,9 @@ elif feature == "📊 Monthly Cleaning Process":
     do_sentiment = st.checkbox("1. Update Sticker Sentiment", value=True)
     do_campaign = st.checkbox("2. Remove Campaign Rows", value=True)
     do_hide = st.checkbox("3. Remove Hide", value=True)
+    do_duplicate = st.checkbox("4. Duplicate URL Check", value=False)
 
-    any_selected = do_sentiment or do_campaign or do_hide
+    any_selected = do_sentiment or do_campaign or do_hide or do_duplicate
     needs_ref = do_sentiment or do_campaign
     files_ok = any_selected and target_file is not None and (
         not needs_ref or ref_file is not None
@@ -343,6 +344,17 @@ elif feature == "📊 Monthly Cleaning Process":
             "remove_hide": do_hide,
         }
 
+        for key in [
+            "mc_result_base",
+            "mc_result_final",
+            "mc_stats",
+            "mc_filename",
+            "mc_duplicate_pending",
+            "mc_duplicate_review",
+            "mc_duplicate_message",
+        ]:
+            st.session_state.pop(key, None)
+
         ref_bytes = ref_file.read() if ref_file else None
         target_bytes = target_file.read()
 
@@ -351,16 +363,44 @@ elif feature == "📊 Monthly Cleaning Process":
                 result_df, all_stats = process_monthly_cleaning(
                     ref_bytes, target_bytes, tasks
                 )
-                st.session_state.mc_result = result_df
+                st.session_state.mc_result_base = result_df
                 st.session_state.mc_stats = all_stats
                 st.session_state.mc_filename = target_file.name
+
+                if do_duplicate:
+                    duplicate_df = find_duplicate_urls(result_df)
+                    if duplicate_df.empty:
+                        st.session_state.mc_result_final = result_df
+                        st.session_state.mc_duplicate_pending = False
+                        st.session_state.mc_duplicate_message = "No duplicate URLs found."
+                    else:
+                        st.session_state.mc_duplicate_pending = True
+                        st.session_state.mc_duplicate_review = duplicate_df
+                        st.session_state.mc_duplicate_message = (
+                            f"Found {len(duplicate_df):,} rows with duplicate URLs. "
+                            "Review and confirm before export."
+                        )
+                else:
+                    st.session_state.mc_result_final = result_df
+                    st.session_state.mc_duplicate_pending = False
+                    st.session_state.mc_duplicate_message = ""
             except Exception as e:
                 st.error(f"Processing failed: {e}")
                 st.stop()
 
-    if "mc_result" in st.session_state:
+    if "mc_result_base" in st.session_state:
         st.divider()
-        st.success(f"Done. {len(st.session_state.mc_result):,} rows remaining.")
+
+        pending_duplicate = st.session_state.get("mc_duplicate_pending", False)
+        final_df = st.session_state.get("mc_result_final")
+        row_count = len(final_df) if final_df is not None else len(st.session_state.mc_result_base)
+
+        if pending_duplicate:
+            st.info(
+                "Core cleaning finished. Duplicate URL review is required before export."
+            )
+        else:
+            st.success(f"Done. {row_count:,} rows remaining.")
 
         for task_name, stats in st.session_state.mc_stats.items():
             with st.container(border=True):
@@ -381,23 +421,69 @@ elif feature == "📊 Monthly Cleaning Process":
                         with col:
                             st.metric(str(label), f"{count:,}")
 
-        output = BytesIO()
-        with pd.ExcelWriter(
-            output,
-            engine="xlsxwriter",
-            engine_kwargs={"options": {"strings_to_urls": False}},
-        ) as writer:
-            st.session_state.mc_result.to_excel(writer, index=False)
-        output.seek(0)
+        if pending_duplicate:
+            st.divider()
+            st.warning(st.session_state.get("mc_duplicate_message", "Duplicate URLs found."))
+            st.caption(
+                "Edit any cell directly, mark Delete for rows you want to remove, then confirm."
+            )
 
-        out_name = (
-            st.session_state.mc_filename or "output.xlsx"
-        ).replace(".", "_cleaned.")
+            editor_source = st.session_state["mc_duplicate_review"].set_index("_row_id")
+            reviewed_df = st.data_editor(
+                editor_source,
+                use_container_width=True,
+                hide_index=True,
+                key="mc_duplicate_editor",
+                column_config={
+                    "Delete": st.column_config.CheckboxColumn("Delete Row", default=False),
+                },
+            )
 
-        st.download_button(
-            label="⬇️ Download Cleaned File",
-            data=output,
-            file_name=out_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary",
-        )
+            if st.button("Confirm Duplicate Review", type="primary"):
+                keep_mask = ~reviewed_df["Delete"].fillna(False)
+                keep_updates = reviewed_df.loc[keep_mask].copy()
+                delete_ids = set(reviewed_df.index[~keep_mask].tolist())
+
+                base_df = st.session_state["mc_result_base"].copy()
+                base_df["_row_id"] = range(len(base_df))
+
+                editable_cols = [
+                    col
+                    for col in keep_updates.columns
+                    if col != "Delete"
+                ]
+                update_df = keep_updates[editable_cols]
+
+                base_df = base_df.set_index("_row_id")
+                base_df.update(update_df)
+                final_df = base_df.drop(index=list(delete_ids), errors="ignore")
+                final_df = final_df.reset_index(drop=True)
+
+                st.session_state.mc_result_final = final_df
+                st.session_state.mc_duplicate_pending = False
+                st.session_state.mc_stats["Duplicate URL Check"] = {
+                    "removed": len(delete_ids)
+                }
+                st.success("Duplicate review confirmed. Export is now ready.")
+
+        if not st.session_state.get("mc_duplicate_pending", False) and "mc_result_final" in st.session_state:
+            output = BytesIO()
+            with pd.ExcelWriter(
+                output,
+                engine="xlsxwriter",
+                engine_kwargs={"options": {"strings_to_urls": False}},
+            ) as writer:
+                st.session_state.mc_result_final.to_excel(writer, index=False)
+            output.seek(0)
+
+            out_name = (
+                st.session_state.mc_filename or "output.xlsx"
+            ).replace(".", "_cleaned.")
+
+            st.download_button(
+                label="⬇️ Download Cleaned File",
+                data=output,
+                file_name=out_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+            )

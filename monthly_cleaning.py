@@ -82,9 +82,37 @@ def remove_hide(target_df):
     return target_df, {"removed": before - after}
 
 
+def find_duplicate_urls(target_df):
+    target_df = target_df.copy()
+
+    if "URL" not in target_df.columns:
+        return pd.DataFrame(columns=["Delete"])
+
+    target_df["_row_id"] = range(len(target_df))
+
+    url_clean = target_df["URL"].astype(str).str.strip()
+    non_blank = target_df["URL"].notna() & (url_clean != "")
+    dup_mask = non_blank & url_clean.duplicated(keep=False)
+
+    dup_df = target_df.loc[dup_mask].copy()
+    if dup_df.empty:
+        return dup_df
+
+    dup_df.insert(0, "Delete", False)
+    dup_df = dup_df.sort_values(["URL", "_row_id"], kind="stable")
+    dup_df.reset_index(drop=True, inplace=True)
+    return dup_df
+
+
 def process_monthly_cleaning(ref_data_bytes, target_data_bytes, tasks):
-    ref_df = pd.read_excel(BytesIO(ref_data_bytes))
     target_df = pd.read_excel(BytesIO(target_data_bytes))
+
+    needs_ref = tasks.get("update_sticker_sentiment") or tasks.get("remove_campaign_rows")
+    ref_df = None
+    if needs_ref:
+        if ref_data_bytes is None:
+            raise ValueError("Reference file is required for selected subtasks")
+        ref_df = pd.read_excel(BytesIO(ref_data_bytes))
 
     all_stats = {}
 
