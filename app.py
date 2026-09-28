@@ -1,6 +1,5 @@
 import json
 import os
-import pickle
 import secrets
 from io import BytesIO
 
@@ -21,7 +20,6 @@ import base64
 SPEAKER_TYPES = ["Brand Voice", "Consumer Voice", "Influencer & Page", "Publisher"]
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 OAUTH_CLIENT_FILE = "oauth_client.json"
-TOKEN_FILE = "token.pickle"
 FIXED_SHEET_URL = "https://docs.google.com/spreadsheets/d/1Hoy7EfkckFdCAWW8ELa3qc41iHpOeJPeOQqjIcfQWRc/edit?gid=1690969829#gid=1690969829"
 
 
@@ -88,19 +86,15 @@ def get_redirect_uri():
 
 
 def get_credentials():
-    creds = None
-
-    if os.path.exists(TOKEN_FILE):
-        with open(TOKEN_FILE, "rb") as f:
-            creds = pickle.load(f)
+    creds = st.session_state.get("creds")
 
     if creds and creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            with open(TOKEN_FILE, "wb") as f:
-                pickle.dump(creds, f)
+            st.session_state.creds = creds
         except Exception:
             creds = None
+            st.session_state.pop("creds", None)
 
     if not creds or not creds.valid:
         query_params = st.query_params
@@ -126,10 +120,7 @@ def get_credentials():
                         code=query_params["code"], code_verifier=verifier
                     )
                     creds = flow.credentials
-                    if os.path.exists(TOKEN_FILE):
-                        os.remove(TOKEN_FILE)
-                    with open(TOKEN_FILE, "wb") as f:
-                        pickle.dump(creds, f)
+                    st.session_state.creds = creds
                     st.query_params.clear()
                     st.rerun()
                 except Exception as e:
@@ -137,8 +128,6 @@ def get_credentials():
                     st.stop()
 
     return creds
-
-
 def read_dict_from_gsheet(spreadsheet_url, creds):
     client = gspread.authorize(creds)
     sheet = client.open_by_url(spreadsheet_url).sheet1
