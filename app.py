@@ -5,6 +5,7 @@ import secrets
 from io import BytesIO
 
 import gspread
+from gspread.exceptions import APIError, SpreadsheetNotFound
 import pandas as pd
 import streamlit as st
 from google.auth.transport.requests import Request
@@ -149,6 +150,45 @@ def read_dict_from_gsheet(spreadsheet_url, creds):
     return df
 
 
+def build_gsheet_error_message(error):
+    error_type = type(error).__name__
+    error_text = str(error).strip()
+    detail = f"{error_type}: {error_text}" if error_text else error_type
+
+    if isinstance(error, SpreadsheetNotFound):
+        return (
+            "Failed to read Google Sheet.\n\n"
+            "Possible causes:\n"
+            "- The signed-in Google account has no access to this sheet\n"
+            "- The sheet URL is invalid or no longer available\n"
+            "- OAuth client/account does not match the shared account\n\n"
+            f"Error detail: {detail}"
+        )
+
+    if isinstance(error, APIError):
+        status_code = getattr(getattr(error, "response", None), "status_code", None)
+        if status_code == 403:
+            hint = "Permission denied (403). Share the sheet with the signed-in account as Viewer."
+        elif status_code == 404:
+            hint = "Sheet not found (404). Check FIXED_SHEET_URL in app.py."
+        elif status_code == 429:
+            hint = "Google API quota exceeded (429). Please try again later."
+        else:
+            hint = "Google Sheets API request failed."
+
+        return (
+            "Failed to read Google Sheet.\n\n"
+            f"{hint}\n"
+            "Also verify OAuth client and redirect URI settings.\n\n"
+            f"Error detail: {detail}"
+        )
+
+    return (
+        "Failed to read Google Sheet. Make sure your account has access.\n\n"
+        f"Error detail: {detail}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Page setup
 # ---------------------------------------------------------------------------
@@ -266,10 +306,8 @@ if feature == "🏷️ Speaker Tag Updater":
                     )
                     speakertype_dict = dict_df_to_dict(dict_df)
                 except Exception as e:
-                    st.error(
-                        f"Failed to read Google Sheet. "
-                        f"Make sure your account has access.\n\nError: {e}"
-                    )
+                    st.error(build_gsheet_error_message(e))
+                    st.caption(f"Dictionary URL: {st.session_state.sheet_url}")
                     st.stop()
 
             with st.spinner("Processing..."):
