@@ -16,6 +16,7 @@ from speaker_tagger import dict_df_to_dict, process_with_dict
 
 import hashlib
 import base64
+import traceback
 
 SPEAKER_TYPES = ["Brand Voice", "Consumer Voice", "Influencer & Page", "Publisher"]
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
@@ -157,7 +158,10 @@ def build_gsheet_error_message(error):
     if isinstance(error, APIError):
         status_code = getattr(getattr(error, "response", None), "status_code", None)
         if status_code == 403:
-            hint = "Permission denied (403). Share the sheet with the signed-in account as Viewer."
+            hint = (
+                "Permission denied (403). Check sheet sharing, "
+                "Google Sheets API enablement, and OAuth project restrictions."
+            )
         elif status_code == 404:
             hint = "Sheet not found (404). Check FIXED_SHEET_URL in app.py."
         elif status_code == 429:
@@ -169,6 +173,17 @@ def build_gsheet_error_message(error):
             "Failed to read Google Sheet.\n\n"
             f"{hint}\n"
             "Also verify OAuth client and redirect URI settings.\n\n"
+            f"Error detail: {detail}"
+        )
+
+    if isinstance(error, PermissionError):
+        return (
+            "Failed to read Google Sheet due to PermissionError.\n\n"
+            "Checks:\n"
+            "- Signed-in account has Viewer access to the dictionary sheet\n"
+            "- Google Sheets API is enabled in the same Google Cloud project as this OAuth client\n"
+            "- Workspace domain policy allows this app to access Google Sheets API\n"
+            "- OAuth client in Streamlit secrets is the same one configured in Google Cloud\n\n"
             f"Error detail: {detail}"
         )
 
@@ -297,6 +312,9 @@ if feature == "🏷️ Speaker Tag Updater":
                 except Exception as e:
                     st.error(build_gsheet_error_message(e))
                     st.caption(f"Dictionary URL: {st.session_state.sheet_url}")
+                    with st.expander("Technical details"):
+                        st.code(repr(e))
+                        st.code(traceback.format_exc())
                     st.stop()
 
             with st.spinner("Processing..."):
