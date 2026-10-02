@@ -458,6 +458,7 @@ elif feature == "📊 Monthly Cleaning Process":
             "mc_match_preview_table",
             "mc_scope_info",
             "mc_month_filter",
+            "mc_removed_campaign_rows",
         ]:
             st.session_state.pop(key, None)
 
@@ -469,6 +470,19 @@ elif feature == "📊 Monthly Cleaning Process":
                 result_df, all_stats, scope_info = process_monthly_cleaning(
                     ref_bytes, target_bytes, tasks, month_filter=selected_month
                 )
+
+                campaign_stats = all_stats.get("Campaign Rows", {})
+                removed_rows_df = campaign_stats.get("removed_rows_df") if isinstance(campaign_stats, dict) else None
+                if isinstance(removed_rows_df, pd.DataFrame):
+                    st.session_state.mc_removed_campaign_rows = removed_rows_df
+                else:
+                    st.session_state.pop("mc_removed_campaign_rows", None)
+
+                if isinstance(campaign_stats, dict) and "removed_rows_df" in campaign_stats:
+                    campaign_stats_clean = campaign_stats.copy()
+                    campaign_stats_clean.pop("removed_rows_df", None)
+                    all_stats["Campaign Rows"] = campaign_stats_clean
+
                 st.session_state.mc_result_base = result_df
                 st.session_state.mc_stats = all_stats
                 st.session_state.mc_filename = target_file.name
@@ -590,6 +604,28 @@ elif feature == "📊 Monthly Cleaning Process":
                         for col, (label, count) in zip(cols, dist.items()):
                             with col:
                                 st.metric(str(label), f"{count:,}")
+
+        removed_campaign_rows = st.session_state.get("mc_removed_campaign_rows")
+        if isinstance(removed_campaign_rows, pd.DataFrame) and not removed_campaign_rows.empty:
+            removed_output = BytesIO()
+            with pd.ExcelWriter(
+                removed_output,
+                engine="xlsxwriter",
+                engine_kwargs={"options": {"strings_to_urls": False}},
+            ) as writer:
+                removed_campaign_rows.to_excel(writer, index=False)
+            removed_output.seek(0)
+
+            removed_name = (
+                st.session_state.mc_filename or "output.xlsx"
+            ).replace(".", "_campaign_removed.")
+
+            st.download_button(
+                label="⬇️ Download Removed Campaign Rows",
+                data=removed_output,
+                file_name=removed_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
         match_stats = st.session_state.mc_stats.get("Match Comment Pillar to Post")
         if match_stats is not None:

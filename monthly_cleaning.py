@@ -111,6 +111,7 @@ def remove_campaign_rows(ref_df, target_df, scope_mask=None):
             "untagged_campaign_comment_removed": 0,
             "distribution": {},
             "unmatched": 0,
+            "removed_rows_df": pd.DataFrame(),
         }
 
     campaign_rows["campaign_tag"] = campaign_rows["tags_customer"].str.extract(
@@ -169,10 +170,22 @@ def remove_campaign_rows(ref_df, target_df, scope_mask=None):
         if str(url).strip() != ""
     }
 
+    removed_step1_df = target_df.loc[matched_step1].copy()
+    if not removed_step1_df.empty:
+        removed_step1_urls = target_urls[matched_step1]
+        removed_step1_tags = removed_step1_urls.map(campaign_url_to_tag).fillna("(Unknown Campaign)")
+        removed_step1_is_comment = is_comment[matched_step1]
+        removed_step1_df["Removal Campaign Tag"] = removed_step1_tags.values
+        removed_step1_df["Removal Step"] = "Step1_TaggedCampaign"
+        removed_step1_df["Removal Category"] = removed_step1_is_comment.map(
+            lambda value: "Tagged Campaign Comment Removed" if value else "Tagged Campaign Post Removed"
+        ).values
+
     target_df = target_df[~matched_step1]
 
     untagged_campaign_comment_removed = 0
     untagged_comment_tag_counts = {}
+    removed_step2_df = pd.DataFrame()
     if removed_post_url_to_tag and "ParentURL" in target_df.columns:
         parent_urls = target_df["ParentURL"].astype(str).str.strip()
         parent_has_value = target_df["ParentURL"].notna() & (parent_urls != "")
@@ -191,7 +204,18 @@ def remove_campaign_rows(ref_df, target_df, scope_mask=None):
         )
         untagged_comment_tag_counts = untagged_comment_tags.value_counts().to_dict()
 
+        removed_step2_df = target_df.loc[matched_step2].copy()
+        if not removed_step2_df.empty:
+            removed_step2_df["Removal Campaign Tag"] = untagged_comment_tags.values
+            removed_step2_df["Removal Step"] = "Step2_ParentURLComment"
+            removed_step2_df["Removal Category"] = "Untagged Campaign Comment Removed"
+
         target_df = target_df[~matched_step2]
+
+    removed_rows_df = pd.concat(
+        [frame for frame in [removed_step1_df, removed_step2_df] if not frame.empty],
+        ignore_index=True,
+    ) if (not removed_step1_df.empty or not removed_step2_df.empty) else pd.DataFrame()
 
     all_tags = (
         set(tagged_post_tag_counts.keys())
@@ -221,6 +245,7 @@ def remove_campaign_rows(ref_df, target_df, scope_mask=None):
         "untagged_campaign_comment_removed": untagged_campaign_comment_removed,
         "distribution": distribution,
         "unmatched": unmatched,
+        "removed_rows_df": removed_rows_df,
     }
 
 
