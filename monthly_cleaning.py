@@ -101,7 +101,7 @@ def update_sticker_sentiment(ref_df, target_df, scope_mask=None):
 
 def remove_campaign_rows(ref_df, target_df, scope_mask=None):
     campaign_mask = ref_df["tags_customer"].fillna("").str.contains("Campaign/", na=False)
-    campaign_rows = ref_df[campaign_mask]
+    campaign_rows = ref_df[campaign_mask].copy()
 
     if campaign_rows.empty:
         return target_df, {
@@ -112,10 +112,20 @@ def remove_campaign_rows(ref_df, target_df, scope_mask=None):
             "unmatched": 0,
         }
 
-    campaign_tags = campaign_rows["tags_customer"].str.extract(r"(Campaign/[^,]+)", expand=False)
-    distribution = campaign_tags.value_counts().to_dict()
+    campaign_rows["campaign_tag"] = campaign_rows["tags_customer"].str.extract(
+        r"(Campaign/[^,]+)", expand=False
+    )
+    campaign_rows["campaign_tag"] = campaign_rows["campaign_tag"].fillna("(Unknown Campaign)")
+    campaign_rows["url_clean"] = campaign_rows["url"].astype(str).str.strip()
+    campaign_rows = campaign_rows[campaign_rows["url_clean"] != ""]
 
-    campaign_urls = set(campaign_rows["url"].astype(str).str.strip())
+    campaign_url_to_tag = (
+        campaign_rows.drop_duplicates(subset="url_clean", keep="first")
+        .set_index("url_clean")["campaign_tag"]
+        .to_dict()
+    )
+    campaign_urls = set(campaign_url_to_tag.keys())
+
     target_urls = target_df["URL"].astype(str).str.strip()
 
     matched_posts = target_urls.isin(campaign_urls)
@@ -123,23 +133,56 @@ def remove_campaign_rows(ref_df, target_df, scope_mask=None):
         mask_scope = scope_mask.reindex(target_df.index, fill_value=False).astype(bool)
         matched_posts = matched_posts & mask_scope
 
-    removed_post_urls = set(target_urls[matched_posts].tolist())
+    removed_post_urls = target_urls[matched_posts]
     removed_posts = int(matched_posts.sum())
+
+    removed_post_tag_counts = (
+        removed_post_urls.map(campaign_url_to_tag)
+        .fillna("(Unknown Campaign)")
+        .value_counts()
+        .to_dict()
+    )
+
+    removed_post_url_to_tag = {
+        url: campaign_url_to_tag.get(url, "(Unknown Campaign)")
+        for url in removed_post_urls.dropna().astype(str)
+        if str(url).strip() != ""
+    }
 
     target_df = target_df[~matched_posts]
 
     removed_comments = 0
-    if removed_post_urls and "ParentURL" in target_df.columns:
+    removed_comment_tag_counts = {}
+    if removed_post_url_to_tag and "ParentURL" in target_df.columns:
         parent_urls = target_df["ParentURL"].astype(str).str.strip()
         parent_has_value = target_df["ParentURL"].notna() & (parent_urls != "")
-        matched_comments = parent_has_value & parent_urls.isin(removed_post_urls)
+        matched_comments = parent_has_value & parent_urls.isin(set(removed_post_url_to_tag.keys()))
 
         if scope_mask is not None:
             mask_scope_after = scope_mask.reindex(target_df.index, fill_value=False).astype(bool)
             matched_comments = matched_comments & mask_scope_after
 
         removed_comments = int(matched_comments.sum())
+
+        removed_comment_tags = (
+            parent_urls[matched_comments]
+            .map(removed_post_url_to_tag)
+            .fillna("(Unknown Campaign)")
+        )
+        removed_comment_tag_counts = removed_comment_tags.value_counts().to_dict()
+
         target_df = target_df[~matched_comments]
+
+    all_tags = set(removed_post_tag_counts.keys()) | set(removed_comment_tag_counts.keys())
+    distribution = {}
+    for tag in sorted(all_tags):
+        posts_count = int(removed_post_tag_counts.get(tag, 0))
+        comments_count = int(removed_comment_tag_counts.get(tag, 0))
+        distribution[tag] = {
+            "removed_posts": posts_count,
+            "removed_comments": comments_count,
+            "removed_total": posts_count + comments_count,
+        }
 
     unmatched = len(campaign_urls) - removed_posts
 

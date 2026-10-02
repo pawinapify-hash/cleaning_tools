@@ -548,13 +548,28 @@ elif feature == "📊 Monthly Cleaning Process":
                 dist = stats.get("distribution", {})
                 if dist:
                     if task_name == "Campaign Rows":
-                        dist_df = pd.DataFrame(
-                            {
-                                "Campaign Tag": [str(label) for label in dist.keys()],
-                                "Rows": [int(count) for count in dist.values()],
-                            }
-                        )
-                        dist_df = dist_df.sort_values("Rows", ascending=False).reset_index(drop=True)
+                        rows = []
+                        for label, values in dist.items():
+                            if isinstance(values, dict):
+                                removed_posts = int(values.get("removed_posts", 0))
+                                removed_comments = int(values.get("removed_comments", 0))
+                                removed_total = int(values.get("removed_total", removed_posts + removed_comments))
+                            else:
+                                removed_posts = int(values)
+                                removed_comments = 0
+                                removed_total = removed_posts
+
+                            rows.append(
+                                {
+                                    "Campaign Tag": str(label),
+                                    "Removed Posts": removed_posts,
+                                    "Removed Comments": removed_comments,
+                                    "Removed Total": removed_total,
+                                }
+                            )
+
+                        dist_df = pd.DataFrame(rows)
+                        dist_df = dist_df.sort_values("Removed Total", ascending=False).reset_index(drop=True)
                         st.caption("Campaign distribution")
                         st.dataframe(dist_df, use_container_width=True, hide_index=True)
                     else:
