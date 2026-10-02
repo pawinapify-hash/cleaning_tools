@@ -535,6 +535,11 @@ elif feature == "📊 Monthly Cleaning Process":
                     st.subheader(f"{task_name}: {stats['updated']:,} updated")
                 elif "removed" in stats:
                     st.subheader(f"{task_name}: {stats['removed']:,} removed")
+                    if "removed_posts" in stats or "removed_comments" in stats:
+                        st.caption(
+                            f"Posts removed: {stats.get('removed_posts', 0):,} | "
+                            f"Comments removed: {stats.get('removed_comments', 0):,}"
+                        )
 
                 if stats.get("unmatched", 0) > 0:
                     unmatched_label = stats.get("unmatched_label", "reference URLs not found in target file")
@@ -542,10 +547,21 @@ elif feature == "📊 Monthly Cleaning Process":
 
                 dist = stats.get("distribution", {})
                 if dist:
-                    cols = st.columns(len(dist))
-                    for col, (label, count) in zip(cols, dist.items()):
-                        with col:
-                            st.metric(str(label), f"{count:,}")
+                    if task_name == "Campaign Rows":
+                        dist_df = pd.DataFrame(
+                            {
+                                "Campaign Tag": [str(label) for label in dist.keys()],
+                                "Rows": [int(count) for count in dist.values()],
+                            }
+                        )
+                        dist_df = dist_df.sort_values("Rows", ascending=False).reset_index(drop=True)
+                        st.caption("Campaign distribution")
+                        st.dataframe(dist_df, use_container_width=True, hide_index=True)
+                    else:
+                        cols = st.columns(len(dist))
+                        for col, (label, count) in zip(cols, dist.items()):
+                            with col:
+                                st.metric(str(label), f"{count:,}")
 
         match_stats = st.session_state.mc_stats.get("Match Comment Pillar to Post")
         if match_stats is not None:

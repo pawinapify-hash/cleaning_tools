@@ -104,7 +104,13 @@ def remove_campaign_rows(ref_df, target_df, scope_mask=None):
     campaign_rows = ref_df[campaign_mask]
 
     if campaign_rows.empty:
-        return target_df, {"removed": 0, "distribution": {}, "unmatched": 0}
+        return target_df, {
+            "removed": 0,
+            "removed_posts": 0,
+            "removed_comments": 0,
+            "distribution": {},
+            "unmatched": 0,
+        }
 
     campaign_tags = campaign_rows["tags_customer"].str.extract(r"(Campaign/[^,]+)", expand=False)
     distribution = campaign_tags.value_counts().to_dict()
@@ -112,19 +118,38 @@ def remove_campaign_rows(ref_df, target_df, scope_mask=None):
     campaign_urls = set(campaign_rows["url"].astype(str).str.strip())
     target_urls = target_df["URL"].astype(str).str.strip()
 
-    before = len(target_df)
-    matched = target_urls.isin(campaign_urls)
-
+    matched_posts = target_urls.isin(campaign_urls)
     if scope_mask is not None:
         mask_scope = scope_mask.reindex(target_df.index, fill_value=False).astype(bool)
-        matched = matched & mask_scope
+        matched_posts = matched_posts & mask_scope
 
-    target_df = target_df[~matched]
-    after = len(target_df)
+    removed_post_urls = set(target_urls[matched_posts].tolist())
+    removed_posts = int(matched_posts.sum())
 
-    unmatched = len(campaign_urls) - int(matched.sum())
+    target_df = target_df[~matched_posts]
 
-    return target_df, {"removed": before - after, "distribution": distribution, "unmatched": unmatched}
+    removed_comments = 0
+    if removed_post_urls and "ParentURL" in target_df.columns:
+        parent_urls = target_df["ParentURL"].astype(str).str.strip()
+        parent_has_value = target_df["ParentURL"].notna() & (parent_urls != "")
+        matched_comments = parent_has_value & parent_urls.isin(removed_post_urls)
+
+        if scope_mask is not None:
+            mask_scope_after = scope_mask.reindex(target_df.index, fill_value=False).astype(bool)
+            matched_comments = matched_comments & mask_scope_after
+
+        removed_comments = int(matched_comments.sum())
+        target_df = target_df[~matched_comments]
+
+    unmatched = len(campaign_urls) - removed_posts
+
+    return target_df, {
+        "removed": removed_posts + removed_comments,
+        "removed_posts": removed_posts,
+        "removed_comments": removed_comments,
+        "distribution": distribution,
+        "unmatched": unmatched,
+    }
 
 
 def remove_hide(target_df, scope_mask=None):
