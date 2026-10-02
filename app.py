@@ -535,10 +535,15 @@ elif feature == "📊 Monthly Cleaning Process":
                     st.subheader(f"{task_name}: {stats['updated']:,} updated")
                 elif "removed" in stats:
                     st.subheader(f"{task_name}: {stats['removed']:,} removed")
-                    if "removed_posts" in stats or "removed_comments" in stats:
+                    if (
+                        "tagged_campaign_post_removed" in stats
+                        or "tagged_campaign_comment_removed" in stats
+                        or "untagged_campaign_comment_removed" in stats
+                    ):
                         st.caption(
-                            f"Posts removed: {stats.get('removed_posts', 0):,} | "
-                            f"Comments removed: {stats.get('removed_comments', 0):,}"
+                            f"Tagged Campaign Post Removed: {stats.get('tagged_campaign_post_removed', 0):,} | "
+                            f"Tagged Campaign Comment Removed: {stats.get('tagged_campaign_comment_removed', 0):,} | "
+                            f"Untagged Campaign Comment Removed: {stats.get('untagged_campaign_comment_removed', 0):,}"
                         )
 
                 if stats.get("unmatched", 0) > 0:
@@ -551,19 +556,27 @@ elif feature == "📊 Monthly Cleaning Process":
                         rows = []
                         for label, values in dist.items():
                             if isinstance(values, dict):
-                                removed_posts = int(values.get("removed_posts", 0))
-                                removed_comments = int(values.get("removed_comments", 0))
-                                removed_total = int(values.get("removed_total", removed_posts + removed_comments))
+                                tagged_post_removed = int(values.get("tagged_campaign_post_removed", 0))
+                                tagged_comment_removed = int(values.get("tagged_campaign_comment_removed", 0))
+                                untagged_comment_removed = int(values.get("untagged_campaign_comment_removed", 0))
+                                removed_total = int(
+                                    values.get(
+                                        "removed_total",
+                                        tagged_post_removed + tagged_comment_removed + untagged_comment_removed,
+                                    )
+                                )
                             else:
-                                removed_posts = int(values)
-                                removed_comments = 0
-                                removed_total = removed_posts
+                                tagged_post_removed = int(values)
+                                tagged_comment_removed = 0
+                                untagged_comment_removed = 0
+                                removed_total = tagged_post_removed
 
                             rows.append(
                                 {
                                     "Campaign Tag": str(label),
-                                    "Removed Posts": removed_posts,
-                                    "Removed Comments": removed_comments,
+                                    "Tagged Campaign Post Removed": tagged_post_removed,
+                                    "Tagged Campaign Comment Removed": tagged_comment_removed,
+                                    "Untagged Campaign Comment Removed": untagged_comment_removed,
                                     "Removed Total": removed_total,
                                 }
                             )

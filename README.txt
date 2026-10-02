@@ -41,12 +41,16 @@ Month filter:
          Message type/complaint     -> Negative
 
   2) Remove Campaign Rows
-     - Step 1: Removes post rows from the Target file when URL matches
-       Reference rows that contain "Campaign/" tags.
-     - Step 2: Removes comment rows whose ParentURL points to posts removed
-       in Step 1 (same month scope).
-     - Result shows campaign distribution with full campaign tag names, plus
-       post/comment removal breakdown.
+     - Step 1: Removes rows in Target where URL matches Reference rows
+       tagged with "Campaign/".
+     - In Step 1, row type is identified by "Post Type" and split into:
+         Tagged Campaign Post Removed
+         Tagged Campaign Comment Removed
+     - Step 2: Removes comment rows whose ParentURL points to campaign posts
+       removed in Step 1 (same month scope), counted as:
+         Untagged Campaign Comment Removed
+     - Result shows campaign distribution with full campaign tag names and
+       all three removal columns above.
 
   3) Remove Hide
      - Removes rows where both columns are "Hide":
@@ -176,7 +180,9 @@ NOTES
 - "Newly Tagged" counts only tags added in the current run.
 - Monthly Cleaning shows per-task stats (updated/removed), tag distribution,
   and unmatched counts when applicable (reference URL or parent post matching).
-- Campaign Rows reports separate counts for removed posts and removed comments.
+- Campaign Rows reports separate counts for:
+  Tagged Campaign Post Removed, Tagged Campaign Comment Removed,
+  and Untagged Campaign Comment Removed.
 - Duplicate URL Check requires review confirmation before final export when
   duplicate rows are found.
 - When a specific month is selected, all subtasks only affect rows in that

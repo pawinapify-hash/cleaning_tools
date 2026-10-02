@@ -106,8 +106,9 @@ def remove_campaign_rows(ref_df, target_df, scope_mask=None):
     if campaign_rows.empty:
         return target_df, {
             "removed": 0,
-            "removed_posts": 0,
-            "removed_comments": 0,
+            "tagged_campaign_post_removed": 0,
+            "tagged_campaign_comment_removed": 0,
+            "untagged_campaign_comment_removed": 0,
             "distribution": {},
             "unmatched": 0,
         }
@@ -128,16 +129,35 @@ def remove_campaign_rows(ref_df, target_df, scope_mask=None):
 
     target_urls = target_df["URL"].astype(str).str.strip()
 
-    matched_posts = target_urls.isin(campaign_urls)
+    matched_step1 = target_urls.isin(campaign_urls)
     if scope_mask is not None:
         mask_scope = scope_mask.reindex(target_df.index, fill_value=False).astype(bool)
-        matched_posts = matched_posts & mask_scope
+        matched_step1 = matched_step1 & mask_scope
 
-    removed_post_urls = target_urls[matched_posts]
-    removed_posts = int(matched_posts.sum())
+    post_type_series = (
+        target_df["Post Type"].astype(str).str.strip().str.lower()
+        if "Post Type" in target_df.columns
+        else pd.Series("", index=target_df.index)
+    )
+    is_comment = post_type_series.str.contains("comment", na=False)
 
-    removed_post_tag_counts = (
+    tagged_campaign_comment_mask = matched_step1 & is_comment
+    tagged_campaign_post_mask = matched_step1 & ~is_comment
+
+    tagged_campaign_post_removed = int(tagged_campaign_post_mask.sum())
+    tagged_campaign_comment_removed = int(tagged_campaign_comment_mask.sum())
+
+    removed_post_urls = target_urls[tagged_campaign_post_mask]
+
+    tagged_post_tag_counts = (
         removed_post_urls.map(campaign_url_to_tag)
+        .fillna("(Unknown Campaign)")
+        .value_counts()
+        .to_dict()
+    )
+    tagged_comment_tag_counts = (
+        target_urls[tagged_campaign_comment_mask]
+        .map(campaign_url_to_tag)
         .fillna("(Unknown Campaign)")
         .value_counts()
         .to_dict()
@@ -149,47 +169,56 @@ def remove_campaign_rows(ref_df, target_df, scope_mask=None):
         if str(url).strip() != ""
     }
 
-    target_df = target_df[~matched_posts]
+    target_df = target_df[~matched_step1]
 
-    removed_comments = 0
-    removed_comment_tag_counts = {}
+    untagged_campaign_comment_removed = 0
+    untagged_comment_tag_counts = {}
     if removed_post_url_to_tag and "ParentURL" in target_df.columns:
         parent_urls = target_df["ParentURL"].astype(str).str.strip()
         parent_has_value = target_df["ParentURL"].notna() & (parent_urls != "")
-        matched_comments = parent_has_value & parent_urls.isin(set(removed_post_url_to_tag.keys()))
+        matched_step2 = parent_has_value & parent_urls.isin(set(removed_post_url_to_tag.keys()))
 
         if scope_mask is not None:
             mask_scope_after = scope_mask.reindex(target_df.index, fill_value=False).astype(bool)
-            matched_comments = matched_comments & mask_scope_after
+            matched_step2 = matched_step2 & mask_scope_after
 
-        removed_comments = int(matched_comments.sum())
+        untagged_campaign_comment_removed = int(matched_step2.sum())
 
-        removed_comment_tags = (
-            parent_urls[matched_comments]
+        untagged_comment_tags = (
+            parent_urls[matched_step2]
             .map(removed_post_url_to_tag)
             .fillna("(Unknown Campaign)")
         )
-        removed_comment_tag_counts = removed_comment_tags.value_counts().to_dict()
+        untagged_comment_tag_counts = untagged_comment_tags.value_counts().to_dict()
 
-        target_df = target_df[~matched_comments]
+        target_df = target_df[~matched_step2]
 
-    all_tags = set(removed_post_tag_counts.keys()) | set(removed_comment_tag_counts.keys())
+    all_tags = (
+        set(tagged_post_tag_counts.keys())
+        | set(tagged_comment_tag_counts.keys())
+        | set(untagged_comment_tag_counts.keys())
+    )
     distribution = {}
     for tag in sorted(all_tags):
-        posts_count = int(removed_post_tag_counts.get(tag, 0))
-        comments_count = int(removed_comment_tag_counts.get(tag, 0))
+        post_count = int(tagged_post_tag_counts.get(tag, 0))
+        tagged_comment_count = int(tagged_comment_tag_counts.get(tag, 0))
+        untagged_comment_count = int(untagged_comment_tag_counts.get(tag, 0))
         distribution[tag] = {
-            "removed_posts": posts_count,
-            "removed_comments": comments_count,
-            "removed_total": posts_count + comments_count,
+            "tagged_campaign_post_removed": post_count,
+            "tagged_campaign_comment_removed": tagged_comment_count,
+            "untagged_campaign_comment_removed": untagged_comment_count,
+            "removed_total": post_count + tagged_comment_count + untagged_comment_count,
         }
 
-    unmatched = len(campaign_urls) - removed_posts
+    unmatched = len(campaign_urls) - int(matched_step1.sum())
 
     return target_df, {
-        "removed": removed_posts + removed_comments,
-        "removed_posts": removed_posts,
-        "removed_comments": removed_comments,
+        "removed": tagged_campaign_post_removed
+        + tagged_campaign_comment_removed
+        + untagged_campaign_comment_removed,
+        "tagged_campaign_post_removed": tagged_campaign_post_removed,
+        "tagged_campaign_comment_removed": tagged_campaign_comment_removed,
+        "untagged_campaign_comment_removed": untagged_campaign_comment_removed,
         "distribution": distribution,
         "unmatched": unmatched,
     }
