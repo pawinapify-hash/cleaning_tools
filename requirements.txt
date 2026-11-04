@@ -1,8 +1,9 @@
-pandas==2.3.3
-numpy==2.4.6
+pandas==3.1.0
+numpy==2.5.4
 openpyxl==3.1.5
-xlsxwriter==3.2.9
-streamlit==1.40.0
+xlsxwriter==3.3.1
+streamlit==1.66.1
 gspread==6.2.1
-google-auth==2.56.2
-google-auth-oauthlib==1.4.0
+google-auth==2.62.1
+google-auth-oauthlib==1.5.0
+pyarrow==26.0.1
