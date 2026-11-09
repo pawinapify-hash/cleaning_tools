@@ -20,7 +20,10 @@ Process:
      for selected source types (blog, online news, newsletter, etc.).
   b) Matches author names against dictionary values (exact, case-insensitive).
   c) Tags rows with "isComment" as Consumer Voice.
-  d) Fallback: tags remaining rows as Influencer & Page.
+  d) For rows with source_type = "SOCIALMEDIA,SOCIALMEDIA_TWITTER":
+     - if reach >= 10,000 -> tag as Influencer & Page
+     - if reach < 10,000, blank, or not numeric -> tag as Consumer Voice
+  e) Fallback: tags remaining rows as Influencer & Page.
 
 Monthly Cleaning Process
 ~~~~~~~~~~~~~~~~~~~~~~~~

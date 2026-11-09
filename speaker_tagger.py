@@ -66,7 +66,8 @@ def update_speaker_tags(df, speakertype_dict):
 
     Step 1: Match author name against speaker dictionary (exact, case-insensitive).
     Step 2: Tag isComment rows as 'Consumer Voice'.
-    Step 3: Fallback - tag remaining rows as 'Influencer & Page'.
+    Step 3: Twitter fallback by reach (>=10000 => Influencer & Page, else Consumer Voice).
+    Step 4: Fallback - tag remaining rows as 'Influencer & Page'.
     """
     df = df.copy()
 
@@ -106,9 +107,41 @@ def update_speaker_tags(df, speakertype_dict):
         df.loc[step2_rows, "tags_customer"] + "," + tag_consumer,
     )
 
-    # Step 3: Fallback - tag remaining as 'Influencer & Page'
+    # Step 3: Twitter fallback by reach
     mask_leftover = ~df["tags_customer"].str.contains("Type of Speaker", na=False)
+
+    twitter_source = "SOCIALMEDIA,SOCIALMEDIA_TWITTER"
+    twitter_mask = df["source_type"].fillna("").astype(str).str.strip().eq(twitter_source)
+
+    if "reach" in df.columns:
+        reach_numeric = pd.to_numeric(
+            df["reach"].astype(str).str.replace(",", "", regex=False).str.strip(),
+            errors="coerce",
+        )
+    else:
+        reach_numeric = pd.Series(np.nan, index=df.index)
+
+    twitter_rows = mask_leftover & twitter_mask
+    twitter_high_reach_rows = twitter_rows & (reach_numeric >= 10000)
+    twitter_low_or_unknown_reach_rows = twitter_rows & ~(reach_numeric >= 10000)
+
     tag_influencer = "Type of Speaker/Influencer & Page"
+    tag_consumer = "Type of Speaker/Consumer Voice"
+
+    df.loc[twitter_high_reach_rows, "tags_customer"] = np.where(
+        df.loc[twitter_high_reach_rows, "tags_customer"] == "",
+        tag_influencer,
+        df.loc[twitter_high_reach_rows, "tags_customer"] + "," + tag_influencer,
+    )
+
+    df.loc[twitter_low_or_unknown_reach_rows, "tags_customer"] = np.where(
+        df.loc[twitter_low_or_unknown_reach_rows, "tags_customer"] == "",
+        tag_consumer,
+        df.loc[twitter_low_or_unknown_reach_rows, "tags_customer"] + "," + tag_consumer,
+    )
+
+    # Step 4: Fallback - tag remaining as 'Influencer & Page'
+    mask_leftover = ~df["tags_customer"].str.contains("Type of Speaker", na=False)
 
     df.loc[mask_leftover, "tags_customer"] = np.where(
         df.loc[mask_leftover, "tags_customer"] == "",
